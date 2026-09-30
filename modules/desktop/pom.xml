@@ -15,6 +15,12 @@
 	<name>Frostguard Desktop Application</name>
 	<description>JavaFX desktop shell, controller layer, and packaged runtime assets</description>
 
+	<!-- Defaults for javafx:run; override from CLI for overnight / real workspaces -->
+	<properties>
+		<frostguard.run.channel>development</frostguard.run.channel>
+		<frostguard.run.workspace>${maven.multiModuleProjectDirectory}/.frostguard-dev</frostguard.run.workspace>
+	</properties>
+
 	<!-- ─── Module-scoped properties (dependency/plugin versions managed by parent) ─── -->
 	<!-- ─── Compile and runtime dependencies ─── -->
 	<dependencies>
@@ -151,8 +157,8 @@
 					<runtimePathOption>CLASSPATH</runtimePathOption>
 					<options>
 						<option>--enable-native-access=ALL-UNNAMED</option>
-						<option>-Dfrostguard.channel=development</option>
-						<option>-Dfrostguard.workspace=${maven.multiModuleProjectDirectory}/.frostguard-dev</option>
+						<option>-Dfrostguard.channel=${frostguard.run.channel}</option>
+						<option>-Dfrostguard.workspace=${frostguard.run.workspace}</option>
 					</options>
 				</configuration>
 			</plugin>

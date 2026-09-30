@@ -25,12 +25,14 @@ cd E:\Desktop\frostguard-daily
 
 **Overnight:**
 ```powershell
-# Quit Nightly first!
+# Quit Nightly first! Also quit any practice / Development fork window.
 cd E:\Desktop\frostguard-daily
-$env:FROSTGUARD_WORKSPACE = "C:\Users\tacki\.frostguard\workspaces\nightly\default-repaired"
-$env:FROSTGUARD_CHANNEL = "nightly"
-.\mvnw.cmd javafx:run
+.\mvnw.cmd javafx:run `
+  "-Dfrostguard.run.workspace=C:\Users\tacki\.frostguard\workspaces\nightly\default-repaired" `
+  "-Dfrostguard.run.channel=nightly"
 ```
+
+(`FROSTGUARD_WORKSPACE` alone is not enough — `javafx:run` sets a JVM workspace flag that must be overridden.)
 
 ## Rules
 
