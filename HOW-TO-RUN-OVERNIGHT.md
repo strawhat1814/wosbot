@@ -3,29 +3,17 @@
 ## Short version
 
 1. Quit **Frostguard Nightly** (and Watcher if it stays open).
-2. Double-click on Desktop:  
-   **`Start Frostguard FROM FORK (real accounts - quit Nightly first).cmd`**
+2. Double-click on Desktop: **`Start Frostguard FROM FORK.cmd`**
 3. Wait for Maven to compile, then the Frostguard window opens.
-4. Use your usual accounts — same DB as `default-repaired`.
+4. Title must say **`default-repaired`** (not Development / frostguard-daily).
+5. Same accounts as before — workspace `nightly\default-repaired`.
 
 That window is **your fork code**, not the Nightly installer.
 
-## Practice first (optional, safer)
+## Manual command (same thing)
 
-Double-click: **`Start Frostguard FROM FORK (practice).cmd`**  
-Uses a separate empty-ish workspace. OK even if Nightly is still open.
-
-## Manual commands (same thing)
-
-**Practice:**
 ```powershell
-cd E:\Desktop\frostguard-daily
-.\mvnw.cmd javafx:run
-```
-
-**Overnight:**
-```powershell
-# Quit Nightly first! Also quit any practice / Development fork window.
+# Quit Nightly first!
 cd E:\Desktop\frostguard-daily
 .\mvnw.cmd javafx:run `
   "-Dfrostguard.run.workspace=C:\Users\tacki\.frostguard\workspaces\nightly\default-repaired" `

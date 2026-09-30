@@ -100,14 +100,20 @@ When a feature is ported, update this table with real paths and tick it on every
 
 ## D. Smoke checks (before overnight)
 
-Prefer a **practice** run first (does not use Nightly’s repaired DB):
+Quit Nightly first, then start from the fork against `default-repaired`:
 
 ```powershell
 cd E:\Desktop\frostguard-daily
-.\mvnw.cmd javafx:run
+.\mvnw.cmd javafx:run `
+  "-Dfrostguard.run.workspace=C:\Users\tacki\.frostguard\workspaces\nightly\default-repaired" `
+  "-Dfrostguard.run.channel=nightly"
 ```
 
-- [ ] App window opens (no `Startup failure` / `ClassNotFoundException`)
+Or Desktop: **`Start Frostguard FROM FORK.cmd`**
+
+- [ ] Window title shows `default-repaired` (not Development)
+- [ ] Profiles load
+- [ ] App opens (no `Startup failure` / `ClassNotFoundException`)
 - [ ] Optional focused tests if you touched that area:
 
 ```powershell
@@ -115,11 +121,7 @@ cd E:\Desktop\frostguard-daily
 # or modules/tasks, modules/vision, etc.
 ```
 
-**Only if** you will overnight from source (and Nightly is quit):
-
-- [ ] Quit Frostguard Nightly completely
-- [ ] Start with repaired workspace (see `HOW-I-USE-THE-FORK.md` section 5)
-- [ ] Confirm runapp / idle / other must-haves in live logs as each feature is ported
+- [ ] Confirm runapp / idle / other must-haves in live logs as needed
 
 ---
 

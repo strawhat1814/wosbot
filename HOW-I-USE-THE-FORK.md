@@ -125,36 +125,26 @@ You want: `local/daily-driver` tracking `fork/local/daily-driver`, and
 
 ## 5. How you RUN Frostguard from the fork (not from Nightly jars)
 
-**Important:** only one Frostguard should use the same workspace DB at a time.
-If Nightly is already running with `default-repaired`, stop Nightly before
-pointing source-run at that same workspace.
+**Important:** only one Frostguard should use `default-repaired` at a time.
+Quit Nightly (and Watcher) before starting the fork.
 
-### Safe practice run (separate empty-ish workspace)
-
-From `E:\Desktop\frostguard-daily`:
-
-```powershell
-cd E:\Desktop\frostguard-daily
-.\mvnw.cmd javafx:run
-```
-
-This uses `.frostguard-dev\` inside this folder. It does **not** touch Nightly’s
-install and does **not** use your repaired overnight DB unless you set that.
-
-### Overnight / real accounts (after you trust it)
+### Overnight / real accounts
 
 1. Quit Frostguard Nightly completely.
-2. Then:
+2. Double-click Desktop: **`Start Frostguard FROM FORK.cmd`**
+3. Or:
 
 ```powershell
 cd E:\Desktop\frostguard-daily
-$env:FROSTGUARD_WORKSPACE = "C:\Users\tacki\.frostguard\workspaces\nightly\default-repaired"
-$env:FROSTGUARD_CHANNEL = "nightly"
-.\mvnw.cmd javafx:run
+.\mvnw.cmd javafx:run `
+  "-Dfrostguard.run.workspace=C:\Users\tacki\.frostguard\workspaces\nightly\default-repaired" `
+  "-Dfrostguard.run.channel=nightly"
 ```
 
-Same accounts/settings as the repaired Nightly shortcut — but code comes from
-**this folder’s source**, not from jar swaps under Local AppData.
+Window title must show **`default-repaired`**. Same accounts/settings as the
+repaired Nightly shortcut — code comes from **this folder’s source**.
+
+(`FROSTGUARD_WORKSPACE` alone is not enough with `javafx:run`.)
 
 ---
 
@@ -186,12 +176,9 @@ After-official merge steps:
 In order, slowly:
 
 1. You read this file and ask about anything confusing.
-2. Practice: open `frostguard-daily`, run `.\mvnw.cmd javafx:run` (dev workspace).
-3. Port **Daily Idle Pause** from the old jar patch into real source on
-   `local/daily-driver`, commit, push to fork.
-4. Port other must-have patches the same way (see `PROJECT-STATUS.md` order).
-5. Switch overnight from Nightly.exe → source run (or a private local build).
-6. Retire jar-swap patching.
+2. Quit Nightly, run Desktop **`Start Frostguard FROM FORK.cmd`**, confirm title is `default-repaired`.
+3. Port remaining features if any; keep `PROJECT-STATUS.md` current.
+4. Retire jar-swap patching / Nightly.exe for overnight.
 
 ---
 

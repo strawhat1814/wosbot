@@ -36,9 +36,9 @@ Quick scan only. Update the right-hand mark when something changes.
 - Beginner guide (`HOW-I-USE-THE-FORK.md`) - `check`
 - After-official-update checklist - `check`
 - How to run overnight (`HOW-TO-RUN-OVERNIGHT.md`) - `check`
-- Desktop fork launchers - `check`
-- Retire Nightly jar-swap workflow - `check` (features now on fork; live overnight still needs you to quit Nightly and use fork launcher)
-- Private overnight run from source - `todo` (you still need to switch; launchers ready)
+- Desktop: `Start Frostguard FROM FORK.cmd` - `check`
+- Retire Nightly jar-swap workflow - `check` (features on fork; use fork launcher for overnight)
+- Private overnight run from source - `check` (launcher fixed for `default-repaired`)
 
 ## Next
 
