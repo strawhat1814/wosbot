@@ -171,7 +171,17 @@ Goal: overnight bot = **fork source**, not “install Nightly then re-patch jars
 
 ---
 
-## 7. What we do next (when you are back)
+## 7. Project status list (keep this updated)
+
+Short “growth — check / jar-only / todo” list for every feature:
+
+→ [`PROJECT-STATUS.md`](PROJECT-STATUS.md)
+
+After-official merge steps:
+
+→ [`CHECKLIST-AFTER-OFFICIAL-UPDATE.md`](CHECKLIST-AFTER-OFFICIAL-UPDATE.md)
+
+## 8. What we do next (when you are back)
 
 In order, slowly:
 
@@ -179,13 +189,13 @@ In order, slowly:
 2. Practice: open `frostguard-daily`, run `.\mvnw.cmd javafx:run` (dev workspace).
 3. Port **Daily Idle Pause** from the old jar patch into real source on
    `local/daily-driver`, commit, push to fork.
-4. Port other must-have patches the same way (Trek, Storehouse, …).
+4. Port other must-have patches the same way (see `PROJECT-STATUS.md` order).
 5. Switch overnight from Nightly.exe → source run (or a private local build).
 6. Retire jar-swap patching.
 
 ---
 
-## 8. Safety rules
+## 9. Safety rules
 
 - Do **not** delete or “fix” the Nightly install while learning.
 - Do **not** run two bots against `default-repaired` at once.
@@ -195,7 +205,7 @@ In order, slowly:
 
 ---
 
-## 9. Quick “am I on the right branch?” check
+## 10. Quick “am I on the right branch?” check
 
 ```powershell
 cd E:\Desktop\frostguard-daily
