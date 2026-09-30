@@ -331,7 +331,19 @@ public abstract class EmulatorInstance {
 
     private void swipe(String idx, PointData from, PointData to, Integer durationMs) {
         withRetries(idx, dev -> {
-            try { dev.executeShellCommand(swipeCommand(from, to, durationMs), new NullOutputReceiver()); }
+            try {
+                // Timed holds (e.g. Growth furniture Upgrade) must outlive the swipe itself.
+                // Default ddmlib timeout is too short for multi-second swipes → UnresponsiveException
+                // → retry storms that keep holding and can crash the game client.
+                long timeoutMs = durationMs == null
+                        ? 5_000L
+                        : Math.max(5_000L, durationMs.longValue() + 3_000L);
+                dev.executeShellCommand(
+                        swipeCommand(from, to, durationMs),
+                        new NullOutputReceiver(),
+                        timeoutMs,
+                        TimeUnit.MILLISECONDS);
+            }
             catch (Exception e) { throw new RuntimeException(e); }
             return Boolean.TRUE;
         }, "swipe");

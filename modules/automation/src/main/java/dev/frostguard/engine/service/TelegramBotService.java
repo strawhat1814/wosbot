@@ -143,6 +143,21 @@ public class TelegramBotService implements BotStateListener {
         return commandServer != null && commandServer.isRunning();
     }
 
+    /**
+     * One-way push to the configured allowed chat (e.g. Growth Mission outcomes).
+     * No-ops when Telegram is disabled, not started, or chat ID is unset.
+     * Uses legacy Markdown parse mode.
+     */
+    public void notifyAllowedChat(String text) {
+        if (text == null || text.isBlank()) {
+            return;
+        }
+        if (!isRunning() || token == null || token.isBlank() || allowedChatId == 0L) {
+            return;
+        }
+        sendMessage(allowedChatId, text);
+    }
+
     /** Read localPort from the shared watcher properties file (default 8765). */
     private static int readLocalPort() {
         try {

@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.*?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<ScrollPane fitToWidth="true" fitToHeight="true" styleClass="edge-to-edge"
+            xmlns="http://javafx.com/javafx/17.0.12" xmlns:fx="http://javafx.com/fxml/1">
+    <content>
+        <VBox maxHeight="Infinity" maxWidth="Infinity"
+              spacing="16" styleClass="task-page-root">
+            <children>
+
+                <VBox styleClass="content-card" VBox.vgrow="NEVER">
+                    <HBox alignment="CENTER_LEFT" maxWidth="Infinity" styleClass="header-yellow">
+                        <children><Label text="Daily idle pause" /></children>
+                    </HBox>
+                    <VBox spacing="12" styleClass="content-card-inner">
+                        <CheckBox fx:id="checkboxDailyIdlePause"
+                                  text="Enable daily idle pause"
+                                  maxWidth="Infinity" wrapText="true" />
+                        <Label text="When enabled, each profile pauses at the UTC start time below (±20 min) for the chosen duration (±20 min). Turn this off to cancel idle and resume bots until you enable it again."
+                               styleClass="description-label"
+                               wrapText="true"
+                               style="-fx-text-fill: #8b949e; -fx-font-size: 11;" />
+                        <GridPane hgap="16" vgap="12">
+                            <columnConstraints>
+                                <ColumnConstraints percentWidth="33.0" hgrow="ALWAYS" />
+                                <ColumnConstraints percentWidth="33.0" hgrow="ALWAYS" />
+                                <ColumnConstraints percentWidth="34.0" hgrow="ALWAYS" />
+                            </columnConstraints>
+                            <VBox spacing="4" GridPane.columnIndex="0" GridPane.rowIndex="0">
+                                <Label text="Start hour (UTC)" />
+                                <TextField fx:id="textfieldIdleStartHour" maxWidth="100.0" prefWidth="80.0" />
+                                <Label fx:id="labelIdleStartHourError" wrapText="true" />
+                            </VBox>
+                            <VBox spacing="4" GridPane.columnIndex="1" GridPane.rowIndex="0">
+                                <Label text="Start minute (UTC)" />
+                                <TextField fx:id="textfieldIdleStartMinute" maxWidth="100.0" prefWidth="80.0" />
+                                <Label fx:id="labelIdleStartMinuteError" wrapText="true" />
+                            </VBox>
+                            <VBox spacing="4" GridPane.columnIndex="2" GridPane.rowIndex="0">
+                                <Label text="Duration (hours, 1–8)" />
+                                <TextField fx:id="textfieldIdleDurationHours" maxWidth="100.0" prefWidth="80.0" />
+                                <Label fx:id="labelIdleDurationHoursError" wrapText="true" />
+                            </VBox>
+                        </GridPane>
+                        <HBox spacing="10" alignment="CENTER_LEFT">
+                            <Button fx:id="buttonCancelDailyIdle"
+                                    text="Turn off daily idle pause"
+                                    onAction="#handleCancelDailyIdle" />
+                            <Button fx:id="buttonRefreshIdleStatus"
+                                    text="Refresh status"
+                                    onAction="#handleRefreshIdleStatus" />
+                        </HBox>
+                        <Label fx:id="labelIdleStatus" wrapText="true" maxWidth="Infinity" />
+                    </VBox>
+                </VBox>
+
+                <VBox styleClass="content-card" VBox.vgrow="NEVER">
+                    <HBox alignment="CENTER_LEFT" maxWidth="Infinity" styleClass="header-teal">
+                        <children><Label text="Tap coord and time jitter" /></children>
+                    </HBox>
+                    <VBox spacing="12" styleClass="content-card-inner">
+                        <Label text="Point taps use the radius below. Area taps still sample inside the template box (edge margin stays fixed). Time jitter only lengthens settle waits — never shortens them."
+                               styleClass="description-label"
+                               wrapText="true"
+                               style="-fx-text-fill: #8b949e; -fx-font-size: 11;" />
+                        <GridPane hgap="16" vgap="12">
+                            <columnConstraints>
+                                <ColumnConstraints percentWidth="33.0" hgrow="ALWAYS" />
+                                <ColumnConstraints percentWidth="33.0" hgrow="ALWAYS" />
+                                <ColumnConstraints percentWidth="34.0" hgrow="ALWAYS" />
+                            </columnConstraints>
+                            <VBox spacing="4" GridPane.columnIndex="0" GridPane.rowIndex="0">
+                                <Label text="Point tap jitter (px)" />
+                                <TextField fx:id="textfieldPointJitterRadius" maxWidth="100.0" prefWidth="80.0" />
+                                <Label fx:id="labelPointJitterRadiusError" wrapText="true" />
+                            </VBox>
+                            <VBox spacing="4" GridPane.columnIndex="1" GridPane.rowIndex="0">
+                                <Label text="Delay jitter (%)" />
+                                <TextField fx:id="textfieldDelayJitterPercent" maxWidth="100.0" prefWidth="80.0" />
+                                <Label fx:id="labelDelayJitterPercentError" wrapText="true" />
+                            </VBox>
+                            <VBox spacing="4" GridPane.columnIndex="2" GridPane.rowIndex="0">
+                                <Label text="Delay jitter cap (ms)" />
+                                <TextField fx:id="textfieldDelayJitterCapMs" maxWidth="100.0" prefWidth="80.0" />
+                                <Label fx:id="labelDelayJitterCapMsError" wrapText="true" />
+                            </VBox>
+                        </GridPane>
+                    </VBox>
+                </VBox>
+
+            </children>
+        </VBox>
+    </content>
+</ScrollPane>

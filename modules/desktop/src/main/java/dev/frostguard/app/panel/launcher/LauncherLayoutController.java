@@ -32,6 +32,7 @@ import dev.frostguard.app.panel.misc.DebuggingLayoutController;
 import dev.frostguard.app.panel.misc.DummyLayoutController;
 import dev.frostguard.engine.emulator.EmulatorType;
 import dev.frostguard.app.panel.emulator.EmuConfigLayoutController;
+import dev.frostguard.app.panel.emulator.HumanLikeBehaviorLayoutController;
 import dev.frostguard.app.panel.dailies.EventsLayoutController;
 import dev.frostguard.app.panel.heroes.ExpertsLayoutController;
 import dev.frostguard.app.panel.misc.FishingLayoutController;
@@ -589,6 +590,9 @@ public class LauncherLayoutController implements IProfileLoadListener, StaminaCh
         EmuConfigLayoutController configCtrl = new EmuConfigLayoutController();
         Parent configPane = loadNode("EmuConfigLayout", configCtrl);
 
+        HumanLikeBehaviorLayoutController humanLikeCtrl = new HumanLikeBehaviorLayoutController();
+        Parent humanLikePane = loadNode("HumanLikeBehaviorLayout", humanLikeCtrl);
+
         TelegramLayoutController telegramCtrl = new TelegramLayoutController();
         Parent telegramPane = loadNode("TelegramLayout", telegramCtrl);
 
@@ -599,6 +603,7 @@ public class LauncherLayoutController implements IProfileLoadListener, StaminaCh
         configTabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
         configTabs.getTabs().addAll(
                 makeTab("Emulators", configPane),
+                makeTab("Human-like", humanLikePane),
                 makeTab("Telegram", telegramPane),
                 makeTab("Updates", updatePane)
         );

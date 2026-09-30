@@ -44,6 +44,7 @@ public enum TpDailyTaskEnum {
     CITY_SURVIVORS                      (71, "City Survivors",     ConfigurationKeyEnum.CITY_ACCEPT_NEW_SURVIVORS_BOOL,        RoutineCategory.CITY),
     CITY_UPGRADE_FURNACE                (70, "City Upgrade Furnace", ConfigurationKeyEnum.CITY_UPGRADE_FURNACE_BOOL,           RoutineCategory.CITY),
     CITY_UPGRADE_PRIORITISE_FURNACE     (72, "Prioritise Furnace", ConfigurationKeyEnum.CITY_UPGRADE_PRIORITISE_FURNACE_BOOL,  RoutineCategory.CITY),
+    CITY_GROWTH_MISSION_BUILD           (74, "Growth Mission Build", ConfigurationKeyEnum.CITY_GROWTH_MISSION_BUILD_BOOL,     RoutineCategory.CITY),
     RESEARCH                            (73, "Research",           ConfigurationKeyEnum.RESEARCH_ENABLED_BOOL,                 RoutineCategory.CITY),
 
     /* ── custom ── */

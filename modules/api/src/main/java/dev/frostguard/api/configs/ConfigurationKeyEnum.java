@@ -89,6 +89,13 @@ public enum ConfigurationKeyEnum {
     CITY_UPGRADE_RESERVE_PRODUCTION_BOOL        ("true",    Boolean.class,  ConfigCategory.CITY),
     CITY_UPGRADE_CONSTRUCTION_LOCK_STRING       ("",        String.class,   ConfigCategory.CITY),
     CITY_UPGRADE_PRIORITISE_FURNACE_BOOL        ("false",   Boolean.class,  ConfigCategory.CITY),
+    CITY_GROWTH_MISSION_BUILD_BOOL              ("false",   Boolean.class,  ConfigCategory.CITY),
+    /**
+     * When true (default), Growth furniture uses single Upgrade/Next taps and
+     * refuses steel-cost pieces. When false, uses repeated 2s click-and-hold
+     * on piece Upgrade (no resource-cost inspect).
+     */
+    CITY_GROWTH_MISSION_FURNITURE_SAVE_STEEL_BOOL ("true",  Boolean.class,  ConfigCategory.CITY),
     RESEARCH_BATTLE_BOOL                        ("false",   Boolean.class,  ConfigCategory.CITY),
     RESEARCH_ECONOMY_BOOL                       ("false",   Boolean.class,  ConfigCategory.CITY),
     RESEARCH_ENABLED_BOOL                       ("false",   Boolean.class,  ConfigCategory.CITY),
@@ -278,6 +285,13 @@ public enum ConfigurationKeyEnum {
     DISCORD_TOKEN_STRING                ("",            String.class,   ConfigCategory.SYSTEM),
     GAME_VERSION_STRING                 ("GLOBAL",      String.class,   ConfigCategory.SYSTEM),
     IDLE_BEHAVIOR_STRING                ("CLOSE_EMULATOR", String.class, ConfigCategory.SYSTEM),
+    DAILY_IDLE_PAUSE_BOOL               ("true",        Boolean.class,  ConfigCategory.SYSTEM),
+    DAILY_IDLE_PAUSE_START_HOUR_INT     ("0",           Integer.class,  ConfigCategory.SYSTEM),
+    DAILY_IDLE_PAUSE_START_MINUTE_INT   ("30",          Integer.class,  ConfigCategory.SYSTEM),
+    DAILY_IDLE_PAUSE_DURATION_HOURS_INT ("7",           Integer.class,  ConfigCategory.SYSTEM),
+    TAP_POINT_JITTER_RADIUS_INT         ("3",           Integer.class,  ConfigCategory.SYSTEM),
+    TAP_DELAY_JITTER_PERCENT_INT        ("15",          Integer.class,  ConfigCategory.SYSTEM),
+    TAP_DELAY_JITTER_CAP_MS_INT         ("120",         Integer.class,  ConfigCategory.SYSTEM),
     // Changed by pernerch | Date: 2026-07-04 | Why: allow explicit stop-policy selection for GUI stop action.
     STOP_BEHAVIOR_STRING                ("DO_NOTHING",  String.class,   ConfigCategory.SYSTEM),
     // Changed by pernerch | Date: 2026-07-04 | Why: separate Telegram stop behavior from local GUI stop behavior.

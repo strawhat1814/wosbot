@@ -39,6 +39,18 @@
                                     <Tooltip text="This routine is still under construction and is not recommended for normal automation." />
                                 </tooltip>
                             </CheckBox>
+                            <CheckBox fx:id="checkBoxGrowthMissionBuild" mnemonicParsing="false"
+                                      text="Growth Mission Build">
+                                <tooltip>
+                                    <Tooltip text="Follow Growth Mission Go for furniture or building upgrades." />
+                                </tooltip>
+                            </CheckBox>
+                            <CheckBox fx:id="checkBoxGrowthFurnitureSaveSteel" mnemonicParsing="false"
+                                      text="Growth furniture: save steel">
+                                <tooltip>
+                                    <Tooltip text="On: single Upgrade/Next taps and skip steel-cost furniture. Off: fast click-and-hold on Upgrade (may spend steel). Repeated 2s holds; no steel/resource-cost check." />
+                                </tooltip>
+                            </CheckBox>
                         </VBox>
 
                         <Separator style="-fx-opacity: 0.25;" />

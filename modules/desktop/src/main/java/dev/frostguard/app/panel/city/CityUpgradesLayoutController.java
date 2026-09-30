@@ -20,6 +20,12 @@ public class CityUpgradesLayoutController extends AbstractProfileController {
 	private CheckBox checkBoxPrioritiseFurnace;
 
 	@FXML
+	private CheckBox checkBoxGrowthMissionBuild;
+
+	@FXML
+	private CheckBox checkBoxGrowthFurnitureSaveSteel;
+
+	@FXML
 	private CheckBox checkboxAcceptNewSurvivors;
 
 	@FXML
@@ -36,6 +42,8 @@ public class CityUpgradesLayoutController extends AbstractProfileController {
 				checkBoxUpgradeFurnace, ConfigurationKeyEnum.CITY_UPGRADE_FURNACE_BOOL,
 				checkBoxReserveProduction, ConfigurationKeyEnum.CITY_UPGRADE_RESERVE_PRODUCTION_BOOL,
 				checkBoxPrioritiseFurnace, ConfigurationKeyEnum.CITY_UPGRADE_PRIORITISE_FURNACE_BOOL,
+				checkBoxGrowthMissionBuild, ConfigurationKeyEnum.CITY_GROWTH_MISSION_BUILD_BOOL,
+				checkBoxGrowthFurnitureSaveSteel, ConfigurationKeyEnum.CITY_GROWTH_MISSION_FURNITURE_SAVE_STEEL_BOOL,
 				checkboxAcceptNewSurvivors, ConfigurationKeyEnum.CITY_ACCEPT_NEW_SURVIVORS_BOOL)
 				.forEach(this::registerCheckBox);
 		Map.of(textFieldSirvivorsOffset, ConfigurationKeyEnum.CITY_ACCEPT_NEW_SURVIVORS_OFFSET_INT)

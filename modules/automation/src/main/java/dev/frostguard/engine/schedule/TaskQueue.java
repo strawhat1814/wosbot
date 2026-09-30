@@ -644,7 +644,9 @@ public class TaskQueue {
     }
 
     private void tryIdleInjection() {
-        if (BearTrapProtectionPolicy.isFullPauseActive(profile)) return;
+        if (DailyIdlePausePolicy.isActive(profile) || BearTrapProtectionPolicy.isFullPauseActive(profile)) {
+            return;
+        }
 
         InjectionRule pending = GlobalMonitorService.getInstance().pollPendingInjection(profile.getId());
         if (pending == null) return;
@@ -665,7 +667,7 @@ public class TaskQueue {
             emitInfo("Skipping task execution during shutdown: " + task.getTaskName());
             return false;
         }
-        if (deferForBearTrapProtection(task)) {
+        if (deferForDailyIdlePause(task) || deferForBearTrapProtection(task)) {
             return false;
         }
         if (task.getTpTask() == TpDailyTaskEnum.INITIALIZE
@@ -730,6 +732,28 @@ public class TaskQueue {
             }
         }
         return ok;
+    }
+
+    private boolean deferForDailyIdlePause(DelayedTask task) {
+        DailyIdlePausePolicy.Decision decision = DailyIdlePausePolicy.evaluate(profile);
+        if (!decision.blocked()) {
+            return false;
+        }
+
+        LocalDateTime retryAt = LocalDateTime.ofInstant(
+                decision.releaseAt(), ZoneId.systemDefault());
+        task.reschedule(retryAt);
+        enqueue(task);
+        emitInfoTask(task, "Daily idle pause after UTC reset is active. Deferred until "
+                + retryAt.format(TS_FMT));
+        try {
+            recordDeferredState(task);
+            ScheduleService.obtain().persistNextSchedule(
+                    profile, task.getTpTask(), retryAt, distinctTaskLabel(task));
+        } catch (Exception ex) {
+            emitWarnTask(task, "Could not persist daily idle deferral: " + ex.getMessage());
+        }
+        return true;
     }
 
     private boolean deferForBearTrapProtection(DelayedTask task) {
