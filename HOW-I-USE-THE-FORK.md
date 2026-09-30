@@ -71,7 +71,11 @@ cd E:\Desktop\frostguard-daily
 
 ### A) Get other people’s new official features into your branch
 
-Official keeps moving. Your branch should absorb that now and then:
+Official keeps moving. Your branch should absorb that now and then.
+
+**Use the full checkbox list:** [`CHECKLIST-AFTER-OFFICIAL-UPDATE.md`](CHECKLIST-AFTER-OFFICIAL-UPDATE.md)
+
+Short version:
 
 ```powershell
 # 1. Download latest official main (does not change your files yet)
@@ -80,7 +84,11 @@ git fetch origin main
 # 2. Put those commits into your daily-driver branch
 git merge origin/main
 
-# 3. Save the updated branch up to YOUR fork on GitHub
+# 3. Check what changed (see checklist sections B–D)
+git log --oneline HEAD@{1}..HEAD
+git diff --stat HEAD@{1}..HEAD
+
+# 4. Save the updated branch up to YOUR fork on GitHub (only if checks look good)
 git push fork local/daily-driver
 ```
 
