@@ -19,6 +19,8 @@
 	<properties>
 		<frostguard.run.channel>development</frostguard.run.channel>
 		<frostguard.run.workspace>${maven.multiModuleProjectDirectory}/.frostguard-dev</frostguard.run.workspace>
+		<!-- Empty default: TelegramWatcherLauncher falls back to source bat / workspace config -->
+		<frostguard.watcher.launcher></frostguard.watcher.launcher>
 	</properties>
 
 	<!-- ─── Module-scoped properties (dependency/plugin versions managed by parent) ─── -->
@@ -159,6 +161,7 @@
 						<option>--enable-native-access=ALL-UNNAMED</option>
 						<option>-Dfrostguard.channel=${frostguard.run.channel}</option>
 						<option>-Dfrostguard.workspace=${frostguard.run.workspace}</option>
+						<option>-Dfrostguard.watcher.launcher=${frostguard.watcher.launcher}</option>
 					</options>
 				</configuration>
 			</plugin>
