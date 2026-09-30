@@ -3,6 +3,7 @@ package dev.frostguard.tasks.city;
 import dev.frostguard.api.configs.TemplatesEnum;
 import dev.frostguard.api.configs.TpDailyTaskEnum;
 import dev.frostguard.api.domain.*;
+import dev.frostguard.engine.helper.TemplateSearchHelper.SearchConfig;
 import dev.frostguard.engine.nav.SearchConfigConstants;
 import dev.frostguard.engine.schedule.DelayedTask;
 import dev.frostguard.engine.schedule.LaunchPoint;
@@ -451,46 +452,6 @@ private int extractLevelFromTemplateNameFlow(String templateName) {
         }
     }
 
-private boolean attemptSingleTroopPromotionFlow(TemplatesEnum template) {
-        logDebug(routineLogTrainingLine("Attempting promotion for: " + template.name()));
-
-        ImageSearchResultData troop = templateSearchHelper.locatePattern(
-                template,
-                SearchConfigConstants.DEFAULT_SINGLE);
-
-        if (!troop.isFound()) {
-            // The next tier can be just beyond the current five-card viewport. Advancing the list without
-            // retrying that same tier skipped the first promotable card on the newly visible page.
-            logDebug(routineLogTrainingLine("Template not visible before scroll: " + template.name()
-                    + ". Advancing troop list and retrying the same level."));
-            scrollToNextTroopTypeFlow();
-            troop = templateSearchHelper.locatePattern(
-                    template,
-                    SearchConfigConstants.STRICT_MATCHING);
-        }
-
-        if (troop.isFound()) {
-            tapInside(troop);
-            sleepTask(300);
-
-
-            emuManager.captureScreen(EMULATOR_NUMBER);
-            ImageSearchResultData promoteButton = templateSearchHelper.locatePattern(
-                    TRAINING_TROOP_PROMOTE,
-                    SearchConfigConstants.DEFAULT_SINGLE);
-
-            if (promoteButton.isFound()) {
-                return performPromotion(template, promoteButton);
-            } else {
-                logDebug(routineLogTrainingLine("Promotion not available for: " + template.name()));
-            }
-        } else {
-            logDebug(routineLogTrainingLine("Template not detected after scroll retry: " + template.name()));
-        }
-
-        return false;
-    }
-
 private void applyForMinistryAppointmentFlow() {
         tapInside(MINISTRY_DETAILS_MIN_VALUE, MINISTRY_DETAILS_MAX_VALUE, 1, 300);
         tapInside(MINISTRY_MORE_DETAILS_MIN_VALUE, MINISTRY_MORE_DETAILS_MAX_VALUE, 1, 300);
@@ -643,21 +604,120 @@ private Duration extractMaxTrainingTimeFlow() {
     }
 
 private boolean attemptTroopPromotionsFlow(TroopTypeShape troopType, int maxLevel) {
-        List<TemplatesEnum> templates = resolveTroopsTemplates(troopType);
-        logInfo(routineLogTrainingLine("Scanning for promotable troops (levels < " + maxLevel + ")"));
+        logInfo(routineLogTrainingLine(
+                "Checking promotion shortcuts for " + troopType.name() + " (max level " + maxLevel + ")."));
+        if (attemptPromotableArrowShortcut()) {
+            return true;
+        }
+        if (attemptOnCardPromotableBadge()) {
+            return true;
+        }
+        logInfo(routineLogTrainingLine(
+                "No jump/on-card arrows — skipping tier-by-tier Promote scan (max level " + maxLevel + ")."));
+        return false;
+    }
 
-        for (int i = templates.size() - 1; i >= 0; i--) {
-            TemplatesEnum template = templates.get(i);
-            int templateLevel = extractLevelFromTemplateNameFlow(template.name());
-
-            if (templateLevel > 0 && templateLevel < maxLevel) {
-                if (attemptSingleTroopPromotionFlow(template)) {
-                    return true;
-                }
+private boolean attemptOnCardPromotableBadge() {
+        emuManager.captureScreen(EMULATOR_NUMBER);
+        SearchConfig badgeCfg = SearchConfig.builder()
+                .withMaxAttempts(2)
+                .withThreshold(70)
+                .withDelay(200L)
+                .withCoordinates(new PointData(40, 560), new PointData(700, 820))
+                .withMaxResults(5)
+                .build();
+        List<ImageSearchResultData> badges = templateSearchHelper.locateAllPatterns(
+                TRAINING_TROOP_PROMOTABLE_BADGE, badgeCfg);
+        if (badges == null || badges.isEmpty()) {
+            ImageSearchResultData single = templateSearchHelper.locatePattern(
+                    TRAINING_TROOP_PROMOTABLE_BADGE,
+                    SearchConfig.builder()
+                            .withMaxAttempts(2)
+                            .withThreshold(65)
+                            .withDelay(200L)
+                            .withCoordinates(new PointData(40, 560), new PointData(700, 820))
+                            .build());
+            if (single.isFound()) {
+                badges = List.of(single);
             }
         }
 
-        logInfo(routineLogTrainingLine("Zero promotable troops detected."));
+        if (badges == null || badges.isEmpty()) {
+            logInfo(routineLogTrainingLine("On-card promotable badge not visible."));
+            return false;
+        }
+
+        ImageSearchResultData badge = badges.stream()
+                .filter(ImageSearchResultData::isFound)
+                .min(Comparator.comparingInt(b -> b.getPoint().getX()))
+                .orElse(null);
+        if (badge == null) {
+            return false;
+        }
+
+        logInfo(routineLogTrainingLine("On-card promotable badge found — selecting that troop."));
+        PointData tap = new PointData(badge.getPoint().getX() + 20, badge.getPoint().getY() + 50);
+        tapNear(tap);
+        sleepTask(500);
+
+        emuManager.captureScreen(EMULATOR_NUMBER);
+        ImageSearchResultData promoteButton = templateSearchHelper.locatePattern(
+                TRAINING_TROOP_PROMOTE, SearchConfigConstants.HIGH_SENSITIVITY);
+        if (!promoteButton.isFound()) {
+            sleepTask(400);
+            emuManager.captureScreen(EMULATOR_NUMBER);
+            promoteButton = templateSearchHelper.locatePattern(
+                    TRAINING_TROOP_PROMOTE, SearchConfigConstants.HIGH_SENSITIVITY);
+        }
+
+        if (promoteButton.isFound()) {
+            return performPromotion(TRAINING_TROOP_PROMOTABLE_BADGE, promoteButton);
+        }
+        logWarning(routineLogTrainingLine("On-card badge clicked but Promote button not found."));
+        return false;
+    }
+
+private boolean attemptPromotableArrowShortcut() {
+        emuManager.captureScreen(EMULATOR_NUMBER);
+        SearchConfig jumpCfg = SearchConfig.builder()
+                .withMaxAttempts(2)
+                .withThreshold(70)
+                .withDelay(200L)
+                .withCoordinates(new PointData(0, 560), new PointData(180, 780))
+                .build();
+        ImageSearchResultData arrow = templateSearchHelper.locatePattern(TRAINING_TROOP_PROMOTABLE_ARROW, jumpCfg);
+        if (!arrow.isFound()) {
+            arrow = templateSearchHelper.locatePatternMultiScale(TRAINING_TROOP_PROMOTABLE_ARROW, jumpCfg);
+        }
+        if (!arrow.isFound()) {
+            arrow = templateSearchHelper.locatePattern(
+                    TRAINING_TROOP_PROMOTABLE_ARROW,
+                    SearchConfig.builder().withMaxAttempts(2).withThreshold(65).withDelay(200L).build());
+        }
+
+        if (!arrow.isFound()) {
+            logInfo(routineLogTrainingLine("Promotable jump arrow (white bubble) not visible."));
+            return false;
+        }
+
+        logInfo(routineLogTrainingLine("Promotable jump arrow found — scrolling to promotable troops."));
+        tapInside(arrow);
+        sleepTask(800);
+
+        emuManager.captureScreen(EMULATOR_NUMBER);
+        ImageSearchResultData promoteButton = templateSearchHelper.locatePattern(
+                TRAINING_TROOP_PROMOTE, SearchConfigConstants.HIGH_SENSITIVITY);
+        if (!promoteButton.isFound()) {
+            sleepTask(500);
+            emuManager.captureScreen(EMULATOR_NUMBER);
+            promoteButton = templateSearchHelper.locatePattern(
+                    TRAINING_TROOP_PROMOTE, SearchConfigConstants.HIGH_SENSITIVITY);
+        }
+
+        if (promoteButton.isFound()) {
+            return performPromotion(TRAINING_TROOP_PROMOTABLE_ARROW, promoteButton);
+        }
+        logWarning(routineLogTrainingLine("Jump arrow clicked but Promote button not found."));
         return false;
     }
 

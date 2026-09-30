@@ -34,9 +34,18 @@ private static final ZoneId UTC = ZoneId.of("UTC");
      * expressed in the JVM's local timezone.
      */
     public static LocalDateTime dailyResetTime() {
+        return dailyResetTimeAfterDays(1);
+    }
+
+    /**
+     * Next UTC midnight reset boundary after the given number of calendar days
+     * (counted from today's UTC date), expressed in the JVM local timezone.
+     */
+    public static LocalDateTime dailyResetTimeAfterDays(int days) {
+        int safeDays = Math.max(1, days);
         ZonedDateTime utcNow = ZonedDateTime.now(UTC);
-        ZonedDateTime tomorrowMidnightUtc = utcNow.toLocalDate().plusDays(1).atStartOfDay(UTC);
-        return tomorrowMidnightUtc.withZoneSameInstant(ZoneId.systemDefault()).toLocalDateTime();
+        ZonedDateTime targetMidnightUtc = utcNow.toLocalDate().plusDays(safeDays).atStartOfDay(UTC);
+        return targetMidnightUtc.withZoneSameInstant(ZoneId.systemDefault()).toLocalDateTime();
     }
 
     /**

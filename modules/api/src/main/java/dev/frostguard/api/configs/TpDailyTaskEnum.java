@@ -61,6 +61,7 @@ public enum TpDailyTaskEnum {
     INTEL                  (33,  "Intel",                        ConfigurationKeyEnum.INTEL_BOOL,                              RoutineCategory.DAILY_OBJECTIVE),
     MAIL_REWARDS           (30,  "Mail Rewards",                 ConfigurationKeyEnum.MAIL_REWARDS_BOOL,                      RoutineCategory.DAILY_OBJECTIVE),
     STOREHOUSE_CHEST       (32,  "Storehouse Chest",             ConfigurationKeyEnum.STOREHOUSE_CHEST_BOOL,                  RoutineCategory.DAILY_OBJECTIVE),
+    STOREHOUSE_WARM_WELCOME(38,  "A Warm Welcome",               ConfigurationKeyEnum.STOREHOUSE_WARM_WELCOME_BOOL,           RoutineCategory.DAILY_OBJECTIVE),
 
     /* ── events ── */
 

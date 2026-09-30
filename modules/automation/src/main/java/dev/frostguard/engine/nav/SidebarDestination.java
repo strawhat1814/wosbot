@@ -17,8 +17,14 @@ public enum SidebarDestination {
             SidebarRowAction.GO),
     LIGHTHOUSE_INTEL(SidebarSection.DAILY, TemplatesEnum.SIDEBAR_DAILY_LIGHTHOUSE_INTEL,
             OpeningPolicy.WILDERNESS_INTEL, SidebarRowAction.GO),
+    ONLINE_REWARDS(SidebarSection.DAILY, TemplatesEnum.SIDEBAR_DAILY_ONLINE_REWARDS,
+            SidebarRowAction.CLAIM),
+    WARM_WELCOME(SidebarSection.DAILY, TemplatesEnum.SIDEBAR_DAILY_WARM_WELCOME,
+            SidebarRowAction.CLAIM),
     TUNDRA_TREK_SUPPLIES(SidebarSection.DAILY, TemplatesEnum.TUNDRA_TREK_SUPPLIES,
-            SidebarRowAction.CLAIM, SidebarRowAction.GO);
+            SidebarRowAction.CLAIM, SidebarRowAction.GO),
+    TUNDRA_TREK(SidebarSection.DAILY, TemplatesEnum.TUNDRA_TREK_DAILY,
+            SidebarRowAction.GO);
 
     private final SidebarSection section;
     private final TemplatesEnum rowIcon;

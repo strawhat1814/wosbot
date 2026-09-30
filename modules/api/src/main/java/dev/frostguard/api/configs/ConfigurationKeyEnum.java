@@ -122,6 +122,7 @@ public enum ConfigurationKeyEnum {
     MAIL_REWARDS_BOOL                   ("false",   Boolean.class,  ConfigCategory.DAILIES),
     MAIL_REWARDS_OFFSET_INT             ("720",     Integer.class,  ConfigCategory.DAILIES),
     STOREHOUSE_CHEST_BOOL               ("false",   Boolean.class,  ConfigCategory.DAILIES),
+    STOREHOUSE_WARM_WELCOME_BOOL        ("false",   Boolean.class,  ConfigCategory.DAILIES),
     STOREHOUSE_STAMINA_CLAIM_TIME_STRING("",        String.class,   ConfigCategory.DAILIES),
 
     /* ─────────── events ─────────── */
@@ -189,6 +190,7 @@ public enum ConfigurationKeyEnum {
     TUNDRA_TRUCK_SSR_BOOL                       ("false",   Boolean.class,       ConfigCategory.EVENTS),
     TUNDRA_TRUCK_USE_GEMS_BOOL                  ("false",   Boolean.class,       ConfigCategory.EVENTS),
     TUNDRA_TREK_AUTOMATION_BOOL                 ("false",   Boolean.class,       ConfigCategory.EVENTS),
+    TUNDRA_TREK_AUTOMATION_INTERVAL_DAYS_INT    ("1",       Integer.class,       ConfigCategory.EVENTS),
     TUNDRA_TREK_SUPPLIES_BOOL                   ("false",   Boolean.class,       ConfigCategory.EVENTS),
 
     /* ─────────── intel ─────────── */

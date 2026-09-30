@@ -106,7 +106,12 @@
                             <Separator style="-fx-opacity: 0.15;" />
 
                             <CheckBox fx:id="checkBoxStorehouseChest"
-                                      text="Claim storehouse chests + stamina" />
+                                      text="Claim storehouse chest (Daily Online Rewards)" />
+
+                            <Separator style="-fx-opacity: 0.15;" />
+
+                            <CheckBox fx:id="checkBoxWarmWelcome"
+                                      text="Claim storehouse stamina (A Warm Welcome)" />
 
                             <Separator style="-fx-opacity: 0.15;" />
 

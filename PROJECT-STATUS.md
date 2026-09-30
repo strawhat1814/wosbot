@@ -1,4 +1,4 @@
-# Our projects — status list
+﻿# Our projects — status list
 
 Quick scan only. Update the right-hand mark when something changes.
 
@@ -18,11 +18,11 @@ Quick scan only. Update the right-hand mark when something changes.
 ## Must-have overnight features
 
 - Growth Mission — `on-fork`
-- Troop promotion (training / promote flow) — `jar-only`
+- Troop promotion (training / promote flow) — `on-fork`
 - Daily idle pause (Human-like) — `on-fork`
-- Tundra Idle Trek — `todo` (verify vs upstream; assets may still be jar-only)
-- Storehouse Daily (Online Rewards + Warm Welcome) — `jar-only`
-- War Academy (Redeem tab) — `jar-only`
+- Tundra Idle Trek — `on-fork`
+- Storehouse Daily (Online Rewards + Warm Welcome) — `on-fork`
+- War Academy (Redeem tab) — `on-fork`
 - LDPlayer runapp launch — `on-fork` + `check`
 
 ## Already upstream (usually leave alone)
@@ -36,17 +36,13 @@ Quick scan only. Update the right-hand mark when something changes.
 - Beginner guide (`HOW-I-USE-THE-FORK.md`) — `check`
 - After-official-update checklist — `check`
 - How to run overnight (`HOW-TO-RUN-OVERNIGHT.md`) — `check`
-- Desktop: `Start Frostguard FROM FORK (practice).cmd` — `check`
-- Desktop: `Start Frostguard FROM FORK (real accounts - quit Nightly first).cmd` — `check`
-- Retire Nightly jar-swap workflow — `todo` (blocked on remaining jar-only items)
-- Private overnight run from source (not Nightly.exe) — `todo` (launchers ready; quit Nightly then use real-accounts cmd)
+- Desktop fork launchers — `check`
+- Retire Nightly jar-swap workflow — `check` (features now on fork; live overnight still needs you to quit Nightly and use fork launcher)
+- Private overnight run from source — `todo` (you still need to switch; launchers ready)
 
-## Porting order (remaining)
+## Porting order
 
-1. Troop promotion — `todo`
-2. Tundra Idle Trek extras — `todo`
-3. Storehouse Daily — `todo`
-4. War Academy — `todo`
+All must-have jar ports above are on the fork (compile-verified). Next: live smoke from fork overnight.
 
 ---
 
@@ -54,26 +50,24 @@ Quick scan only. Update the right-hand mark when something changes.
 
 ```
 growth ............ on-fork
-troop/training .... jar-only
+troop/training .... on-fork
 daily idle ........ on-fork
-tundra idle trek .. todo
-storehouse ........ jar-only
-war academy ....... jar-only
+tundra idle trek .. on-fork
+storehouse ........ on-fork
+war academy ....... on-fork
 ldplayer runapp ... on-fork check
 ```
 
 ---
 
-## Folders (so you don’t open the wrong one)
+## Folders
 
 | Project | Folder |
 |---|---|
 | Daily driver (use this) | `E:\Desktop\frostguard-daily` |
 | Old review / patches | `E:\Desktop\frostguard-review` |
-| Growth worktree | `E:\Desktop\frostguard-growth` |
-| Runapp PR worktree | `E:\Desktop\frostguard-runapp-pr` |
 | Installed Nightly (legacy) | `%LOCALAPPDATA%\Frostguard Nightly\` |
 
 ---
 
-Last updated: 2026-09-30 (evening) — growth + daily idle ported to fork
+Last updated: 2026-09-30 evening — troop, trek, storehouse, war academy ported (compile OK; live evidence pending)
