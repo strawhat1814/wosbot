@@ -1,4 +1,4 @@
-﻿# Our projects — status list
+﻿# Our projects - status list
 
 Quick scan only. Update the right-hand mark when something changes.
 
@@ -7,9 +7,9 @@ Quick scan only. Update the right-hand mark when something changes.
 | Mark | Meaning |
 |---|---|
 | `check` | Done where we need it (official and/or on `local/daily-driver`) |
-| `on-fork` | On `local/daily-driver` source — run from `frostguard-daily` |
-| `jar-only` | Still only Nightly jar patch — **must port** to fork |
-| `upstream` | Already in official Nightly/`main` — no local work needed |
+| `on-fork` | On `local/daily-driver` source - run from `frostguard-daily` |
+| `jar-only` | Still only Nightly jar patch - **must port** to fork |
+| `upstream` | Already in official Nightly/`main` - no local work needed |
 | `todo` | Not started / blocked / unclear |
 | `later` | Wanted, but not next |
 
@@ -17,36 +17,36 @@ Quick scan only. Update the right-hand mark when something changes.
 
 ## Must-have overnight features
 
-- Growth Mission — `on-fork`
-- Troop promotion (training / promote flow) — `on-fork`
-- Daily idle pause (Human-like) — `on-fork`
-- Tundra Idle Trek — `on-fork`
-- Storehouse Daily (Online Rewards + Warm Welcome) — `on-fork`
-- War Academy (Redeem tab) — `on-fork`
-- LDPlayer runapp launch — `on-fork` + `check`
+- Growth Mission - `on-fork`
+- Troop promotion (training / promote flow) - `on-fork`
+- Daily idle pause (Human-like) - `on-fork`
+- Tundra Idle Trek - `on-fork`
+- Storehouse Daily (Online Rewards + Warm Welcome) - `on-fork`
+- War Academy (Redeem tab) - `on-fork`
+- LDPlayer runapp launch - `on-fork` + `check`
 
 ## Already upstream (usually leave alone)
 
-- Gather resource level 9 — `upstream` + `check`
-- Profile status dots — `upstream` + `check`
+- Gather resource level 9 - `upstream` + `check`
+- Profile status dots - `upstream` + `check`
 
 ## Infra / process
 
-- Fork daily-driver branch (`local/daily-driver`) — `check`
-- Beginner guide (`HOW-I-USE-THE-FORK.md`) — `check`
-- After-official-update checklist — `check`
-- How to run overnight (`HOW-TO-RUN-OVERNIGHT.md`) — `check`
-- Desktop fork launchers — `check`
-- Retire Nightly jar-swap workflow — `check` (features now on fork; live overnight still needs you to quit Nightly and use fork launcher)
-- Private overnight run from source — `todo` (you still need to switch; launchers ready)
+- Fork daily-driver branch (`local/daily-driver`) - `check`
+- Beginner guide (`HOW-I-USE-THE-FORK.md`) - `check`
+- After-official-update checklist - `check`
+- How to run overnight (`HOW-TO-RUN-OVERNIGHT.md`) - `check`
+- Desktop fork launchers - `check`
+- Retire Nightly jar-swap workflow - `check` (features now on fork; live overnight still needs you to quit Nightly and use fork launcher)
+- Private overnight run from source - `todo` (you still need to switch; launchers ready)
 
-## Porting order
+## Next
 
-All must-have jar ports above are on the fork (compile-verified). Next: live smoke from fork overnight.
+Live smoke from fork overnight (compile OK; live evidence still pending).
 
 ---
 
-## After every official merge — tick these if you use them
+## After every official merge - tick these if you use them
 
 ```
 growth ............ on-fork
@@ -70,4 +70,4 @@ ldplayer runapp ... on-fork check
 
 ---
 
-Last updated: 2026-09-30 evening — troop, trek, storehouse, war academy ported (compile OK; live evidence pending)
+Last updated: 2026-09-30 evening - troop, trek, storehouse, war academy ported (compile OK; live evidence pending)
