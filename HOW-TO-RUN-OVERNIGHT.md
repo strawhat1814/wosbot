@@ -27,3 +27,8 @@ cd E:\Desktop\frostguard-daily
 - One app at a time on `default-repaired`.
 - Do not start Nightly.exe for overnight once you switch.
 - First start can take several minutes (download/compile).
+
+## Telegram
+
+Fork overnight uses the installed **FrostguardNightlyWatcher.exe** (set by the Desktop launcher).
+If Telegram commands do nothing: confirm that process is running, or restart via `Start Frostguard FROM FORK.cmd`.
