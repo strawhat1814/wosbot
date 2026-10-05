@@ -1,43 +1,111 @@
 package dev.frostguard.tasks.economy;
 
 import java.awt.Color;
+import java.awt.image.BufferedImage;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Locale;
+import java.util.regex.Pattern;
 
+import dev.frostguard.vision.convert.GameTimeUtils;
+import dev.frostguard.vision.convert.ImageConverter;
+import dev.frostguard.vision.convert.RegexNumberParser;
+import dev.frostguard.vision.ocr.ResilientOcrExecutor;
+import dev.frostguard.api.configs.TemplatesEnum;
 import dev.frostguard.api.configs.TpDailyTaskEnum;
-import dev.frostguard.api.domain.AccountDescriptor;
-import dev.frostguard.api.domain.AreaData;
 import dev.frostguard.api.domain.ImageSearchResultData;
-import dev.frostguard.api.domain.OcrSettingsData;
 import dev.frostguard.api.domain.PointData;
-import dev.frostguard.engine.nav.SidebarDestination;
+import dev.frostguard.api.domain.AreaData;
+import dev.frostguard.api.domain.AccountDescriptor;
+import dev.frostguard.api.domain.OcrSettingsData;
+import dev.frostguard.api.domain.RawImageData;
+import dev.frostguard.engine.service.StaminaService;
 import dev.frostguard.engine.schedule.DelayedTask;
 import dev.frostguard.engine.schedule.LaunchPoint;
-import dev.frostguard.engine.service.StatisticsService;
-import dev.frostguard.vision.convert.GameTimeUtils;
-import dev.frostguard.vision.ocr.ResilientOcrExecutor;
+import dev.frostguard.tasks.diagnostics.TaskDiagnosticSnapshots;
+import dev.frostguard.engine.nav.SidebarDestination;
+import dev.frostguard.engine.nav.SearchConfigConstants;
+import dev.frostguard.engine.helper.TemplateSearchHelper.SearchConfig;
+import dev.frostguard.tasks.diagnostics.TaskControlSignals;
 
 /**
- * Claims the Storehouse chest via the Daily sidebar Online Rewards row on World.
+ * Task responsible for claiming rewards from the Storehouse.
+ * 
+ * <p>
+ * This task:
+ * <ul>
+ * <li>Navigates to the Storehouse via Research Center</li>
+ * <li>Claims daily chest rewards (available every few hours)</li>
+ * <li>Claims a visible stamina can on the same visit</li>
+ * <li>Reads the on-building countdown via OCR to schedule the next chest visit</li>
+ * </ul>
+ * 
+ * <p>
+ * <b>Reward Types:</b>
+ * <ul>
+ * <li>Chest: General resources, multiple claims per day</li>
+ * <li>Stamina: 120 base stamina + bonus from Agnes expert</li>
+ * </ul>
  */
 public class StorehouseChestRoutine extends DelayedTask {
 
-    private static final int TIMER_OCR_MAX_ATTEMPTS = 3;
-    private static final int MAX_TIMER_SECONDS = 7200;
-    private static final int FALLBACK_RESCHEDULE_MINUTES = 5;
-    private static final int ROW_TIMER_LEFT_OFFSET = 70;
-    private static final int ROW_TIMER_RIGHT_OFFSET = 280;
-    private static final int ROW_TIMER_HALF_HEIGHT = 22;
+    // ========== Navigation Coordinates ==========
+    private static final AreaData STOREHOUSE_VISIBLE_BUILDING_AREA = new AreaData(
+            new PointData(105, 530), new PointData(125, 550));
+    private static final AreaData STOREHOUSE_TITLE_AREA = new AreaData(
+            new PointData(245, 515), new PointData(505, 575));
+    private static final int STOREHOUSE_SELECTION_SETTLE_MILLIS = 2_200;
+    private static final int STOREHOUSE_DESELECTION_SETTLE_MILLIS = 800;
+    private static final PointData STOREHOUSE_SCROLL_START = new PointData(1, 636);
+    private static final PointData STOREHOUSE_SCROLL_END = new PointData(2, 636);
 
-    static final OcrSettingsData ROW_TIMER_OCR_SETTINGS = OcrSettingsData.assembler()
-            .textLayout(OcrSettingsData.TextLayout.SINGLE_LINE)
+    // ========== Stamina Reward Coordinates ==========
+    private static final PointData STAMINA_AMOUNT_TOP_LEFT = new PointData(436, 632);
+    private static final PointData STAMINA_AMOUNT_BOTTOM_RIGHT = new PointData(487, 657);
+    private static final AreaData STAMINA_REWARD_TITLE_AREA = new AreaData(
+            new PointData(170, 750), new PointData(550, 825));
+    private static final AreaData STAMINA_CLAIM_BUTTON_AREA = new AreaData(
+            new PointData(200, 900), new PointData(520, 1020));
+    private static final AreaData STAMINA_TOOLTIP_TITLE_AREA = new AreaData(
+            new PointData(45, 670), new PointData(300, 750));
+
+    // ========== Fallback Timer OCR ==========
+    static final PointData FALLBACK_TIMER_TOP_LEFT = new PointData(285, 642);
+    static final PointData FALLBACK_TIMER_BOTTOM_RIGHT = new PointData(430, 666);
+
+    // ========== Constants ==========
+    private static final int TIMER_OCR_MAX_ATTEMPTS = 3;
+    private static final int BUBBLE_SEARCH_ATTEMPTS = 6;
+    private static final long BUBBLE_SEARCH_DELAY_MILLIS = 250L;
+    private static final int CLAIM_CLOSE_SETTLE_MILLIS = 800;
+    private static final int BUBBLE_CONFIRMATION_MARGIN = 24;
+    private static final int CLAIM_BUTTON_POLL_INTERVAL_MILLIS = 400;
+    private static final int CLAIM_BUTTON_TIMEOUT_MILLIS = 5_000;
+    private static final int REWARD_TITLE_THRESHOLD = 88;
+    private static final int CLAIM_BUTTON_THRESHOLD = 88;
+    private static final int TOOLTIP_TITLE_THRESHOLD = 88;
+    private static final String BUILDING_COUNTDOWN_WHITELIST = "0123456789:d";
+    private static final int BASE_STOREHOUSE_STAMINA = 120;
+    private static final int SCROLL_ATTEMPT_COUNT = 2;
+    private static final int SCROLL_REPEAT_DELAY = 300;
+
+    // On-building countdown glyphs measured on a 720x1280 city frame.
+    static final Color BUILDING_TIMER_GREEN = new Color(61, 216, 13);
+
+    // ========== OCR Settings ==========
+    private static final OcrSettingsData STAMINA_OCR_SETTINGS = OcrSettingsData.assembler()
+            .setTextColor(new Color(248, 247, 234))
             .stripBackground(true)
-            .setTextColor(new Color(255, 255, 255))
-            .charWhitelist("0123456789:")
+            .charWhitelist("0123456789")
+            .textLayout(OcrSettingsData.TextLayout.SINGLE_LINE)
+
             .build();
 
-    private ResilientOcrExecutor<LocalDateTime> textHelper;
-    private LocalDateTime nextChestTime;
+    private ResilientOcrExecutor<String> textHelper;
+    private StorehouseVisitFlow.VisitState visitState = StorehouseVisitFlow.VisitState.READY;
+    private StorehouseVisitFlow.ActivityPhase activityPhase = StorehouseVisitFlow.ActivityPhase.RESCHEDULING;
+    private Integer pendingAgnesStamina;
 
     public StorehouseChestRoutine(AccountDescriptor profile, TpDailyTaskEnum tpDailyTask) {
         super(profile, tpDailyTask);
@@ -48,105 +116,367 @@ public class StorehouseChestRoutine extends DelayedTask {
         return false;
     }
 
-    private void loadConfiguration() {
-        textHelper = new ResilientOcrExecutor<>(provider);
-        logDebug("Configuration loaded");
-    }
-
-    private void resetExecutionState() {
-        nextChestTime = null;
-        logDebug("Execution state reset");
-    }
-
     @Override
     protected void execute() {
-        loadConfiguration();
-        resetExecutionState();
-        claimOnlineRewardsChest();
-        navigationHelper.closeSidebar();
-        scheduleNext();
-    }
+        this.textHelper = new ResilientOcrExecutor<>(provider);
+        pendingAgnesStamina = null;
+        setVisitState(StorehouseVisitFlow.VisitState.READY, "New execute() visit; state recalculated in memory");
 
-    private void claimOnlineRewardsChest() {
-        logInfo("Claiming Storehouse chest through Daily Online Rewards on World.");
-        if (navigationHelper.navigateToSidebarDestination(SidebarDestination.ONLINE_REWARDS)) {
-            sleepTask(2000L);
-            logInfo("Online Rewards Claim activated; chest should auto-collect on World.");
-            nextChestTime = LocalDateTime.now().plusHours(1);
-            StatisticsService.obtain().addToCounter(profile, "Storehouse Chests Claimed", 1);
-        } else {
-            logWarning("Online Rewards Claim was unavailable (missing, hidden, or on cooldown).");
-            nextChestTime = readRowCooldownOrFallback(SidebarDestination.ONLINE_REWARDS);
-        }
-    }
-
-    private LocalDateTime readRowCooldownOrFallback(SidebarDestination destination) {
-        ImageSearchResultData row = navigationHelper.findSidebarDestinationRow(destination);
-        if (row.isFound() && row.getPoint() != null) {
-            AreaData timerArea = rowTimerArea(row);
-            LocalDateTime cooldown = textHelper.attemptRecognition(
-                    timerArea.topLeft(),
-                    timerArea.bottomRight(),
-                    TIMER_OCR_MAX_ATTEMPTS,
-                    200L,
-                    ROW_TIMER_OCR_SETTINGS,
-                    GameTimeUtils::isAcceptedFormat,
-                    text -> LocalDateTime.now().plus(GameTimeUtils.parseDuration(text)));
-            if (cooldown == null) {
-                logWarning("Row timer OCR empty for " + destination + "; using fallback.");
-                return LocalDateTime.now().plusMinutes(FALLBACK_RESCHEDULE_MINUTES);
+        StorehouseVisitFlow.VisitDecision decision;
+        try {
+            if (openStorehouse()) {
+                decision = StorehouseVisitFlow.execute(new StorehouseActions());
+            } else {
+                captureInterfaceFailure("storehouse-open");
+                decision = StorehouseVisitFlow.retryBeforeFlow("Storehouse could not be opened.");
             }
-            long secondsDiff = Duration.between(LocalDateTime.now(), cooldown).getSeconds();
-            if (secondsDiff > MAX_TIMER_SECONDS) {
-                logWarning(String.format(
-                        "Row timer exceeds 2 hours (%d min) for %s; using 1 hour fallback.",
-                        secondsDiff / 60, destination));
-                return LocalDateTime.now().plusHours(1);
-            }
-            logInfo("Row cooldown for " + destination + ": " + GameTimeUtils.formatCountdown(cooldown));
-            return cooldown;
-        }
-        return LocalDateTime.now().plusMinutes(FALLBACK_RESCHEDULE_MINUTES);
-    }
-
-    static AreaData rowTimerArea(ImageSearchResultData rowIcon) {
-        PointData center = rowIcon.getPoint();
-        int top = Math.max(0, center.getY() - ROW_TIMER_HALF_HEIGHT);
-        int bottom = center.getY() + ROW_TIMER_HALF_HEIGHT;
-        return new AreaData(
-                new PointData(center.getX() + ROW_TIMER_LEFT_OFFSET, top),
-                new PointData(center.getX() + ROW_TIMER_RIGHT_OFFSET, bottom));
-    }
-
-    static LocalDateTime nextChestVisit(LocalDateTime now, LocalDateTime nextChestTime) {
-        LocalDateTime chest = nextChestTime;
-        if (chest != null && chest.isBefore(now)) {
-            chest = null;
-        }
-        return chest != null ? chest : now.plusMinutes(FALLBACK_RESCHEDULE_MINUTES);
-    }
-
-    private void scheduleNext() {
-        LocalDateTime now = LocalDateTime.now();
-        if (nextChestTime != null && nextChestTime.isBefore(now)) {
-            nextChestTime = null;
+        } catch (RuntimeException failure) {
+            TaskControlSignals.rethrowControlSignal(failure);
+            logError("Storehouse visit failed unexpectedly; retrying in five minutes: " + failure.getMessage());
+            captureInterfaceFailure("visit-error");
+            decision = StorehouseVisitFlow.retryBeforeFlow("Unexpected visit error: "
+                    + failure.getClass().getSimpleName());
         }
 
-        LocalDateTime nextReset = GameTimeUtils.dailyResetTime();
-        if (nextChestTime != null && nextChestTime.isAfter(nextReset)) {
-            logInfo("Chest time exceeds reset, capping at reset time.");
-            nextChestTime = nextReset;
-        }
-
-        LocalDateTime scheduledTime = nextChestVisit(now, nextChestTime);
-        String reason = nextChestTime != null ? "chest claim" : "No valid times (fallback)";
-        logInfo(String.format("Rescheduling for %s at: %s", reason, scheduledTime.format(DATETIME_FORMATTER)));
+        setActivityPhase(StorehouseVisitFlow.ActivityPhase.RESCHEDULING);
+        setVisitState(decision.state(), decision.reason());
+        LocalDateTime scheduledTime = LocalDateTime.now().plus(decision.delay());
+        logInfo(String.format("Storehouse visit state %s; %s. Confirmed collections: chest=%d, stamina=%d. "
+                        + "Rescheduling once for %s at %s.",
+                visitState, decision.reason(), decision.confirmedChestCollections(),
+                decision.confirmedStaminaCollections(), decision.delay(),
+                scheduledTime.format(DATETIME_FORMATTER)));
         reschedule(scheduledTime);
+    }
+
+    /**
+     * Opens the Storehouse from the stable Research Center sidebar anchor.
+     */
+    private boolean openStorehouse() {
+        logDebug("Navigating to Storehouse");
+
+        if (!navigationHelper.navigateToSidebarDestination(SidebarDestination.RESEARCH_CENTER)) {
+            logError("Research Center sidebar destination not reached.");
+            return false;
+        }
+
+        // The Research Center centers the city with a visible part of the Storehouse at the left.
+        // Selecting that stable visible area avoids a momentum-sensitive map pan.
+        tapInside(STOREHOUSE_VISIBLE_BUILDING_AREA.topLeft(), STOREHOUSE_VISIBLE_BUILDING_AREA.bottomRight());
+        sleepTask(STOREHOUSE_SELECTION_SETTLE_MILLIS);
+
+        ImageSearchResultData selected = templateSearchHelper.locatePattern(
+                TemplatesEnum.STOREHOUSE_SELECTED_CURRENT,
+                SearchConfig.builder()
+                        .withArea(STOREHOUSE_TITLE_AREA)
+                        .withThreshold(85)
+                        .withMaxAttempts(3)
+                        .withDelay(300L)
+                        .build());
+        if (selected.isFound()) {
+            logInfo("Storehouse selected and verified by its title anchor.");
+            // The reward bubbles are only actionable after Android Back closes the
+            // building's Details/Upgrade selection controls.
+            pressBack();
+            sleepTask(STOREHOUSE_DESELECTION_SETTLE_MILLIS);
+            logInfo("Storehouse selection controls closed; reward bubbles are now accessible.");
+            return true;
+        }
+
+        logWarning("Storehouse title anchor was not detected after the direct selection.");
+        return false;
+    }
+
+    private final class StorehouseActions implements StorehouseVisitFlow.Actions<StorehouseBubbleDetector.Candidate> {
+
+        @Override
+        public StorehouseVisitFlow.Observation<StorehouseBubbleDetector.Candidate> findChest() {
+            return observeBubble(StorehouseBubbleDetector.Kind.CHEST, StorehouseBubbleDetector.SEARCH_AREA);
+        }
+
+        @Override
+        public StorehouseVisitFlow.Observation<StorehouseBubbleDetector.Candidate> findStamina() {
+            return observeBubble(StorehouseBubbleDetector.Kind.STAMINA, StorehouseBubbleDetector.SEARCH_AREA);
+        }
+
+        @Override
+        public StorehouseVisitFlow.CollectionState collectChest(StorehouseBubbleDetector.Candidate candidate) {
+            logInfo("Chest found. Claiming reward.");
+            tapInside(candidate.center(), candidate.center());
+            sleepTask(500);
+            tapInside(STOREHOUSE_SCROLL_START, STOREHOUSE_SCROLL_END, SCROLL_ATTEMPT_COUNT, SCROLL_REPEAT_DELAY);
+            sleepTask(CLAIM_CLOSE_SETTLE_MILLIS);
+            return confirmBubbleDisappeared(candidate, StorehouseBubbleDetector.Kind.CHEST);
+        }
+
+        @Override
+        public StorehouseVisitFlow.CollectionState collectStamina(
+                StorehouseBubbleDetector.Candidate candidate) {
+            logInfo("Stamina bubble found. Opening its claim dialog.");
+            tapInside(candidate.center(), candidate.center());
+            ImageSearchResultData claimButton = awaitStaminaClaimButton();
+            if (claimButton == null) {
+                captureInterfaceFailure("stamina-claim-button-missing");
+                return StorehouseVisitFlow.CollectionState.UNCONFIRMED;
+            }
+
+            pendingAgnesStamina = readAgnesBonus();
+            logDebug("Agnes stamina OCR result: "
+                    + (pendingAgnesStamina == null ? "unreadable" : pendingAgnesStamina));
+            logInfo("Stamina Claim button confirmed. Claiming the reward.");
+            tapInside(claimButton);
+            sleepTask(4_000);
+            StorehouseVisitFlow.CollectionState confirmation = confirmBubbleDisappeared(
+                    candidate, StorehouseBubbleDetector.Kind.STAMINA);
+            if (confirmation == StorehouseVisitFlow.CollectionState.CONFIRMED) {
+                StaminaService.getServices().addExternalStamina(profile.getId(), BASE_STOREHOUSE_STAMINA);
+                if (pendingAgnesStamina != null && pendingAgnesStamina > 0) {
+                    StaminaService.getServices().addExternalStamina(profile.getId(), pendingAgnesStamina);
+                    logInfo(String.format("Confirmed stamina collection: %d base + %d Agnes bonus.",
+                            BASE_STOREHOUSE_STAMINA, pendingAgnesStamina));
+                } else {
+                    logInfo("Confirmed stamina collection: " + BASE_STOREHOUSE_STAMINA + " base stamina.");
+                }
+            }
+            pendingAgnesStamina = null;
+            return confirmation;
+        }
+
+        @Override
+        public StorehouseVisitFlow.CooldownRead readCooldown() {
+            return StorehouseChestRoutine.this.readCooldown();
+        }
+
+        @Override
+        public void onPhase(StorehouseVisitFlow.ActivityPhase phase) {
+            setActivityPhase(phase);
+            if (phase == StorehouseVisitFlow.ActivityPhase.READING_COOLDOWN) {
+                setVisitState(StorehouseVisitFlow.VisitState.WAITING_COOLDOWN,
+                        "Both reward types were absent on reliable city scans");
+            }
+        }
+    }
+
+    private StorehouseVisitFlow.CollectionState confirmBubbleDisappeared(
+            StorehouseBubbleDetector.Candidate clicked, StorehouseBubbleDetector.Kind kind) {
+        AreaData checkArea = expandedArea(clicked.bounds(), BUBBLE_CONFIRMATION_MARGIN);
+        StorehouseVisitFlow.Observation<StorehouseBubbleDetector.Candidate> observation = observeBubble(kind, checkArea);
+        if (observation.state() == StorehouseVisitFlow.ObservationState.ABSENT) {
+            logInfo("Confirmed " + kind.name().toLowerCase(Locale.ROOT)
+                    + " bubble disappeared after collection.");
+            return StorehouseVisitFlow.CollectionState.CONFIRMED;
+        }
+        captureInterfaceFailure(kind.name().toLowerCase(Locale.ROOT) + "-collection-unconfirmed");
+        return observation.state() == StorehouseVisitFlow.ObservationState.UNKNOWN
+                ? StorehouseVisitFlow.CollectionState.UNKNOWN
+                : StorehouseVisitFlow.CollectionState.UNCONFIRMED;
+    }
+
+    private StorehouseVisitFlow.Observation<StorehouseBubbleDetector.Candidate> observeBubble(
+            StorehouseBubbleDetector.Kind kind, AreaData area) {
+        ImageSearchResultData cityAnchor = templateSearchHelper.locatePattern(
+                TemplatesEnum.GAME_HOME_FURNACE, SearchConfigConstants.DEFAULT_SINGLE);
+        if (cityAnchor == null || !cityAnchor.isFound()) {
+            captureInterfaceFailure(kind.name().toLowerCase(Locale.ROOT) + "-scan-not-in-city");
+            logWarning("Storehouse " + kind.name().toLowerCase(Locale.ROOT)
+                    + " scan is unknown: city anchor missing.");
+            return StorehouseVisitFlow.Observation.unknown();
+        }
+
+        boolean captureFailed = false;
+        for (int attempt = 1; attempt <= BUBBLE_SEARCH_ATTEMPTS; attempt++) {
+            try {
+                RawImageData capture = emuManager.captureScreen(EMULATOR_NUMBER);
+                BufferedImage frame = ImageConverter.toBufferedImage(capture);
+                List<StorehouseBubbleDetector.Candidate> candidates = StorehouseBubbleDetector.locate(frame, area);
+                for (StorehouseBubbleDetector.Candidate candidate : candidates) {
+                    if (candidate.kind() == kind) {
+                        logDebug("Storehouse " + kind.name().toLowerCase(Locale.ROOT) + " bubble found");
+                        return StorehouseVisitFlow.Observation.found(candidate);
+                    }
+                }
+            } catch (RuntimeException failure) {
+                TaskControlSignals.rethrowControlSignal(failure);
+                captureFailed = true;
+                logWarning("Storehouse " + kind.name().toLowerCase(Locale.ROOT)
+                        + " scan capture failed: " + failure.getClass().getSimpleName() + ": " + failure.getMessage());
+            }
+            if (attempt < BUBBLE_SEARCH_ATTEMPTS) {
+                sleepTask(BUBBLE_SEARCH_DELAY_MILLIS);
+            }
+        }
+        if (captureFailed) {
+            captureInterfaceFailure(kind.name().toLowerCase(Locale.ROOT) + "-scan-unknown");
+            return StorehouseVisitFlow.Observation.unknown();
+        }
+        logDebug("Storehouse " + kind.name().toLowerCase(Locale.ROOT) + " bubble absent after stable scan");
+        return StorehouseVisitFlow.Observation.absent();
+    }
+
+    private ImageSearchResultData awaitStaminaClaimButton() {
+        StorehouseStaminaClaimFlow.Result result = StorehouseStaminaClaimFlow.awaitClaimButton(
+                new StorehouseStaminaClaimFlow.Actions() {
+                    @Override
+                    public boolean isRewardDialogVisible() {
+                        ImageSearchResultData title = locateStaminaDialogTemplate(
+                                TemplatesEnum.STOREHOUSE_STAMINA_REWARD_TITLE,
+                                STAMINA_REWARD_TITLE_AREA,
+                                REWARD_TITLE_THRESHOLD);
+                        return title != null && title.isFound();
+                    }
+
+                    @Override
+                    public ImageSearchResultData findClaimButton() {
+                        return locateStaminaDialogTemplate(
+                                TemplatesEnum.STOREHOUSE_STAMINA_CLAIM_TEXT,
+                                STAMINA_CLAIM_BUTTON_AREA,
+                                CLAIM_BUTTON_THRESHOLD);
+                    }
+
+                    @Override
+                    public boolean isTooltipVisible() {
+                        return isStaminaTooltipVisible();
+                    }
+
+                    @Override
+                    public void pressBack() {
+                        logInfo("Stamina tooltip confirmed after opening the Storehouse reward; dismissing it once with Back.");
+                        StorehouseChestRoutine.this.pressBack();
+                    }
+
+                    @Override
+                    public void waitAfterBack() {
+                        sleepTask(CLAIM_CLOSE_SETTLE_MILLIS);
+                    }
+
+                    @Override
+                    public void waitForNextPoll() {
+                        sleepTask(CLAIM_BUTTON_POLL_INTERVAL_MILLIS);
+                    }
+                }, Duration.ofMillis(CLAIM_BUTTON_TIMEOUT_MILLIS), System::nanoTime);
+        if (result.claimButton() != null) {
+            return result.claimButton();
+        }
+        logWarning("Storehouse stamina reward was not verified with a Claim button"
+                + (result.rewardDialogSeen() ? "; reward dialog was visible." : "; reward dialog title was not visible."));
+        return null;
+    }
+
+    private ImageSearchResultData locateStaminaDialogTemplate(
+            TemplatesEnum template, AreaData area, int threshold) {
+        return templateSearchHelper.locatePattern(template, SearchConfig.builder()
+                .withArea(area)
+                .withThreshold(threshold)
+                .withMaxAttempts(1)
+                .withDelay(0)
+                .build());
+    }
+
+    private boolean isStaminaTooltipVisible() {
+        ImageSearchResultData tooltipTitle = locateStaminaDialogTemplate(
+                TemplatesEnum.STOREHOUSE_STAMINA_TOOLTIP_TITLE,
+                STAMINA_TOOLTIP_TITLE_AREA,
+                TOOLTIP_TITLE_THRESHOLD);
+        return tooltipTitle != null && tooltipTitle.isFound();
+    }
+
+    private Integer readAgnesBonus() {
+        return integerHelper.attemptRecognition(
+                STAMINA_AMOUNT_TOP_LEFT,
+                STAMINA_AMOUNT_BOTTOM_RIGHT,
+                TIMER_OCR_MAX_ATTEMPTS,
+                200L,
+                STAMINA_OCR_SETTINGS,
+                text -> RegexNumberParser.conformsTo(text, Pattern.compile(".*?(\\d+).*")),
+                text -> RegexNumberParser.extractByPattern(text, Pattern.compile(".*?(\\d+).*")));
+    }
+
+    private StorehouseVisitFlow.CooldownRead readCooldown() {
+        logInfo("Neither Storehouse reward bubble is present; reading the cooldown.");
+        String timer = readBuildingCountdown(buildingCountdownSettings());
+        if (timer == null) {
+            timer = readBuildingCountdown(buildingCountdownWhiteSettings());
+        }
+        if (timer == null) {
+            logWarning("Storehouse cooldown OCR was unreadable; using the one-hour fallback.");
+            return StorehouseVisitFlow.CooldownRead.unreadable("OCR returned no accepted countdown");
+        }
+
+        logInfo("Storehouse cooldown OCR read: '" + timer + "'.");
+        try {
+            Duration cooldown = GameTimeUtils.parseDuration(timer);
+            if (cooldown.isZero() || cooldown.isNegative()) {
+                return StorehouseVisitFlow.CooldownRead.invalid("Countdown was not positive: " + timer);
+            }
+            return StorehouseVisitFlow.CooldownRead.valid(cooldown);
+        } catch (RuntimeException invalid) {
+            return StorehouseVisitFlow.CooldownRead.invalid("Countdown could not be parsed: " + timer);
+        }
+    }
+
+    private String readBuildingCountdown(OcrSettingsData settings) {
+        return textHelper.attemptRecognition(
+                FALLBACK_TIMER_TOP_LEFT,
+                FALLBACK_TIMER_BOTTOM_RIGHT,
+                TIMER_OCR_MAX_ATTEMPTS,
+                200L,
+                settings,
+                GameTimeUtils::isAcceptedFormat,
+                text -> text);
+    }
+
+    private void captureInterfaceFailure(String situation) {
+        String snapshot = TaskDiagnosticSnapshots.capture(
+                emuManager, EMULATOR_NUMBER, "storehousechest", situation);
+        logWarning("Storehouse interface outcome uncertain; diagnostic snapshot: " + snapshot);
+    }
+
+    private void setVisitState(StorehouseVisitFlow.VisitState next, String reason) {
+        if (visitState != next) {
+            logInfo("Storehouse visit state: " + visitState + " -> " + next + " (" + reason + ")");
+        } else {
+            logInfo("Storehouse visit state remains " + next + " (" + reason + ")");
+        }
+        visitState = next;
+    }
+
+    private void setActivityPhase(StorehouseVisitFlow.ActivityPhase next) {
+        if (activityPhase != next) {
+            logInfo("Storehouse activity phase: " + activityPhase + " -> " + next);
+            activityPhase = next;
+        }
+    }
+
+    private AreaData expandedArea(AreaData area, int margin) {
+        RawImageData raw = emuManager.captureScreen(EMULATOR_NUMBER);
+        BufferedImage frame = ImageConverter.toBufferedImage(raw);
+        int left = Math.max(0, area.topLeft().getX() - margin);
+        int top = Math.max(0, area.topLeft().getY() - margin);
+        int right = Math.min(frame.getWidth() - 1, area.bottomRight().getX() + margin);
+        int bottom = Math.min(frame.getHeight() - 1, area.bottomRight().getY() + margin);
+        return new AreaData(new PointData(left, top), new PointData(right, bottom));
+    }
+
+    static OcrSettingsData buildingCountdownSettings() {
+        return buildingCountdownSettings(BUILDING_TIMER_GREEN);
+    }
+
+    static OcrSettingsData buildingCountdownWhiteSettings() {
+        return buildingCountdownSettings(Color.WHITE);
+    }
+
+    private static OcrSettingsData buildingCountdownSettings(Color textColor) {
+        return OcrSettingsData.assembler()
+                .textLayout(OcrSettingsData.TextLayout.SINGLE_LINE)
+                .stripBackground(true)
+                .setTextColor(textColor)
+                .charWhitelist(BUILDING_COUNTDOWN_WHITELIST)
+                .build();
     }
 
     @Override
     protected LaunchPoint getRequiredStartLocation() {
-        return LaunchPoint.WORLD;
+        return LaunchPoint.HOME;
     }
 
     @Override
