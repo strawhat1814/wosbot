@@ -13,7 +13,9 @@ import dev.frostguard.api.domain.AreaData;
 import dev.frostguard.api.domain.ImageSearchResultData;
 import dev.frostguard.api.domain.OcrSettingsData;
 import dev.frostguard.api.domain.PointData;
+import dev.frostguard.engine.helper.SidebarNavigator;
 import dev.frostguard.engine.helper.TemplateSearchHelper.SearchConfig;
+import dev.frostguard.engine.nav.CommonOCRSettings;
 import dev.frostguard.engine.nav.SearchConfigConstants;
 import dev.frostguard.engine.nav.SidebarDestination;
 import dev.frostguard.engine.schedule.DelayedTask;
@@ -262,13 +264,13 @@ public class WarmWelcomeRoutine extends DelayedTask {
     private LocalDateTime readRowCooldownOrFallback(SidebarDestination destination) {
         ImageSearchResultData row = navigationHelper.findSidebarDestinationRow(destination);
         if (row.isFound() && row.getPoint() != null) {
-            AreaData timerArea = StorehouseChestRoutine.rowTimerArea(row);
+            AreaData timerArea = SidebarNavigator.rowActionAreaFor(row);
             LocalDateTime cooldown = textHelper.attemptRecognition(
                     timerArea.topLeft(),
                     timerArea.bottomRight(),
                     TIMER_OCR_MAX_ATTEMPTS,
                     200L,
-                    StorehouseChestRoutine.ROW_TIMER_OCR_SETTINGS,
+                    CommonOCRSettings.TRAVEL_TIME_SETTINGS,
                     GameTimeUtils::isAcceptedFormat,
                     text -> LocalDateTime.now().plus(GameTimeUtils.parseDuration(text)));
             if (cooldown == null) {
