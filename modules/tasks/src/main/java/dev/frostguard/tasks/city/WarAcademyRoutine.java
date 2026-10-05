@@ -327,4 +327,8 @@ public class WarAcademyRoutine extends DelayedTask {
 
     private record ShardRedeemCandidate(ImageSearchResultData button, int remaining) {
     }
+
+    static boolean redemptionMadeProgress(int initialShards, int finalShards) {
+        return initialShards > 0 && finalShards < initialShards;
+    }
 }
