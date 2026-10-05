@@ -95,6 +95,8 @@ public class WarmWelcomeRoutine extends DelayedTask {
 
         boolean warmWelcomeActivated = activateWarmWelcomeClaim();
         navigationHelper.closeSidebar();
+        // Keep trying the city can-bubble even when the Daily Claim control was missing:
+        // an unreadable cooldown is not proof that stamina was already claimed.
         sleepTask(warmWelcomeActivated ? 2000L : 300L);
         if (warmWelcomeActivated && finishStaminaClaim("after Daily shortcut", false)) {
             scheduleNext();
@@ -111,6 +113,7 @@ public class WarmWelcomeRoutine extends DelayedTask {
 
     private boolean activateWarmWelcomeClaim() {
         logInfo("Claiming Storehouse stamina through Daily A Warm Welcome on World.");
+        // Green "Complete" means claim-ready: tap the sidebar checkmark every time.
         if (navigationHelper.navigateToSidebarDestination(SidebarDestination.WARM_WELCOME)) {
             sleepTask(2000L);
             logInfo("A Warm Welcome Daily Claim activated (shortcut); looking for reward Claim next.");
@@ -120,6 +123,18 @@ public class WarmWelcomeRoutine extends DelayedTask {
         nextStaminaTime = readRowCooldownOrFallback(SidebarDestination.WARM_WELCOME);
         persistNextStaminaTime();
         return false;
+    }
+
+    private String readRowStatus(ImageSearchResultData row) {
+        ResilientOcrExecutor<String> statusReader = new ResilientOcrExecutor<>(provider);
+        return statusReader.attemptRecognition(
+                StorehouseChestRoutine.rowStatusArea(row).topLeft(),
+                StorehouseChestRoutine.rowStatusArea(row).bottomRight(),
+                TIMER_OCR_MAX_ATTEMPTS,
+                200L,
+                StorehouseChestRoutine.ROW_STATUS_OCR_SETTINGS,
+                text -> text != null && !text.isBlank(),
+                String::trim);
     }
 
     private boolean collectLeftoverStaminaBubble(boolean staminaDue, boolean warmWelcomeActivated) {
@@ -261,31 +276,61 @@ public class WarmWelcomeRoutine extends DelayedTask {
 
     private LocalDateTime readRowCooldownOrFallback(SidebarDestination destination) {
         ImageSearchResultData row = navigationHelper.findSidebarDestinationRow(destination);
-        if (row.isFound() && row.getPoint() != null) {
-            AreaData timerArea = StorehouseChestRoutine.rowTimerArea(row);
-            LocalDateTime cooldown = textHelper.attemptRecognition(
-                    timerArea.topLeft(),
-                    timerArea.bottomRight(),
-                    TIMER_OCR_MAX_ATTEMPTS,
-                    200L,
-                    StorehouseChestRoutine.ROW_TIMER_OCR_SETTINGS,
-                    GameTimeUtils::isAcceptedFormat,
-                    text -> LocalDateTime.now().plus(GameTimeUtils.parseDuration(text)));
-            if (cooldown == null) {
-                logWarning("Row timer OCR empty for " + destination + "; using fallback.");
-                return LocalDateTime.now().plusMinutes(FALLBACK_RESCHEDULE_MINUTES);
+        if (!row.isFound() || row.getPoint() == null) {
+            logWarning("Warm Welcome row not found; retrying soon.");
+            return unreadableCooldownFallback(LocalDateTime.now());
+        }
+        return readUnavailableRowSchedule(row);
+    }
+
+    private LocalDateTime readUnavailableRowSchedule(ImageSearchResultData row) {
+        String status = readRowStatus(row);
+        if (status != null) {
+            logInfo("Warm Welcome row status OCR: '" + status + "'");
+            if (GameTimeUtils.isAcceptedFormat(status)) {
+                LocalDateTime fromStatus = LocalDateTime.now().plus(GameTimeUtils.parseDuration(status));
+                if (StorehouseChestRoutine.isPlausibleCountdown(fromStatus)) {
+                    logInfo("Warm Welcome status countdown: "
+                            + GameTimeUtils.formatCountdown(fromStatus));
+                    return fromStatus;
+                }
             }
-            long secondsDiff = Duration.between(LocalDateTime.now(), cooldown).getSeconds();
-            if (secondsDiff > MAX_TIMER_SECONDS) {
-                logWarning(String.format(
-                        "Row timer exceeds 2 hours (%d min) for %s; using 1 hour fallback.",
-                        secondsDiff / 60, destination));
-                return LocalDateTime.now().plusHours(1);
+            if (StorehouseChestRoutine.isClaimReadyStatus(status)) {
+                logWarning("Warm Welcome is claim-ready (Complete) but Claim was not activated; retrying soon.");
+                return unreadableCooldownFallback(LocalDateTime.now());
             }
-            logInfo("Row cooldown for " + destination + ": " + GameTimeUtils.formatCountdown(cooldown));
+        }
+
+        AreaData timerArea = StorehouseChestRoutine.rowTimerArea(row);
+        LocalDateTime cooldown = textHelper.attemptRecognition(
+                timerArea.topLeft(),
+                timerArea.bottomRight(),
+                TIMER_OCR_MAX_ATTEMPTS,
+                200L,
+                StorehouseChestRoutine.ROW_TIMER_OCR_SETTINGS,
+                GameTimeUtils::isAcceptedFormat,
+                text -> LocalDateTime.now().plus(GameTimeUtils.parseDuration(text)));
+        if (cooldown != null && StorehouseChestRoutine.isPlausibleCountdown(cooldown)) {
+            logInfo("Warm Welcome action-slot cooldown: "
+                    + GameTimeUtils.formatCountdown(cooldown));
             return cooldown;
         }
-        return LocalDateTime.now().plusMinutes(FALLBACK_RESCHEDULE_MINUTES);
+        if (cooldown != null) {
+            long seconds = Duration.between(LocalDateTime.now(), cooldown).getSeconds();
+            logWarning(String.format(
+                    "Ignoring implausible Warm Welcome action-slot countdown (%d s).", seconds));
+        } else {
+            logWarning("Warm Welcome row timer OCR empty; retrying soon.");
+        }
+        return unreadableCooldownFallback(LocalDateTime.now());
+    }
+
+    /**
+     * Empty cooldown OCR must not jump to the next cycle reset: that skips a still-claimable
+     * Warm Welcome when Claim is missing and the timer text is unreadable.
+     */
+    static LocalDateTime unreadableCooldownFallback(LocalDateTime now) {
+        return now.plusMinutes(FALLBACK_RESCHEDULE_MINUTES);
     }
 
     private boolean isTimeToClaimStamina() {

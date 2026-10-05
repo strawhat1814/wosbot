@@ -1,10 +1,15 @@
 package dev.frostguard.tasks.economy;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.LocalDateTime;
 
 import org.junit.jupiter.api.Test;
+
+import dev.frostguard.api.domain.AreaData;
+import dev.frostguard.api.domain.ImageSearchResultData;
+import dev.frostguard.engine.helper.SidebarNavigator;
 
 class StorehouseChestScheduleTest {
 
@@ -30,5 +35,30 @@ class StorehouseChestScheduleTest {
     @Test
     void keepsAChestCountdownThatIsExactlyNow() {
         assertEquals(NOW, StorehouseChestRoutine.nextChestVisit(NOW, NOW));
+    }
+
+    @Test
+    void readsCooldownFromTheClaimActionSlot() {
+        // Kevin live Warm Welcome icon @(46,822) with GO_HALF_HEIGHT=40.
+        ImageSearchResultData icon = ImageSearchResultData.hit(46, 822, 99.0, 44, 44);
+
+        AreaData timerArea = StorehouseChestRoutine.rowTimerArea(icon);
+
+        assertEquals(SidebarNavigator.rowActionAreaFor(icon), timerArea);
+        assertEquals(AreaData.of(361, 782, 440, 862), timerArea);
+    }
+
+    @Test
+    void readsGreenStatusUnderTheRowTitle() {
+        ImageSearchResultData icon = ImageSearchResultData.hit(46, 822, 99.0, 44, 44);
+
+        assertEquals(AreaData.of(116, 826, 346, 858), StorehouseChestRoutine.rowStatusArea(icon));
+    }
+
+    @Test
+    void treatsCompleteAndCompletedAsClaimReadyStatus() {
+        assertTrue(StorehouseChestRoutine.isClaimReadyStatus("Complete"));
+        assertTrue(StorehouseChestRoutine.isClaimReadyStatus("Completed"));
+        assertTrue(StorehouseChestRoutine.isClaimReadyStatus("  COMPLETED "));
     }
 }
