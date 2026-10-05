@@ -207,7 +207,7 @@ public final class SidebarNavigator {
         return true;
     }
 
-    static AreaData rowActionAreaFor(ImageSearchResultData rowIcon) {
+    public static AreaData rowActionAreaFor(ImageSearchResultData rowIcon) {
         PointData center = rowIcon.getPoint();
         if (center == null) {
             throw new IllegalArgumentException("A located row icon is required");
