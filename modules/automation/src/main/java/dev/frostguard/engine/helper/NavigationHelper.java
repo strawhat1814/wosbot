@@ -6,6 +6,8 @@ import dev.frostguard.api.domain.AccountDescriptor;
 import dev.frostguard.api.domain.AreaData;
 import dev.frostguard.api.domain.ImageSearchResultData;
 import dev.frostguard.api.domain.PointData;
+import dev.frostguard.api.domain.RawImageData;
+import dev.frostguard.engine.diagnostics.DiagnosticSnapshotStore;
 import dev.frostguard.engine.emulator.EmulatorController;
 import dev.frostguard.engine.error.HomeNotFoundException;
 import dev.frostguard.engine.error.ProfileInReconnectStateException;
@@ -20,6 +22,9 @@ import dev.frostguard.engine.nav.ShopTab;
 import dev.frostguard.engine.schedule.LaunchPoint;
 import dev.frostguard.engine.service.LoggingService;
 import dev.frostguard.vision.logging.ProfileContextLogger;
+import dev.frostguard.vision.convert.ImageConverter;
+
+import java.time.Instant;
 
 // Screen location verification and cross-screen navigation for
 // primary game views and auxiliary menus.
@@ -59,6 +64,13 @@ public class NavigationHelper {
     private static final int ALLIANCE_POWER_RANKING_SCROLLS = 23;
     private static final int ALLIANCE_POWER_RANKING_SCROLL_DURATION_MS = 250;
     private static final long ALLIANCE_POWER_ROW_LOAD_MS = 500;
+    static final AreaData CRYSTAL_LAB_TUTORIAL_DISMISSAL = AreaData.of(470, 890, 490, 910);
+    static final AreaData CRYSTAL_LAB_BUILDING_ANCHOR = AreaData.of(330, 600, 500, 780);
+    private static final int CRYSTAL_LAB_NAVIGATION_ATTEMPTS = 2;
+    private static final int CRYSTAL_LAB_ANCHOR_CHECKS = 3;
+    private static final int CRYSTAL_LAB_UI_CHECKS = 3;
+    private static final long CRYSTAL_LAB_CHECK_DELAY_MS = 500L;
+    private static final long CRYSTAL_LAB_CITY_SETTLE_MS = 1_000L;
 
     private final TemplateSearchHelper searcher;
     private final EmulatorController emu;
@@ -109,6 +121,109 @@ public class NavigationHelper {
         return navigateToSidebarDestination(SidebarDestination.LAND_OF_HEROES);
     }
 
+    /** Completes the Crystal Laboratory city transition after its Daily sidebar destination is selected. */
+    private boolean navigateToCrystalLaboratory() {
+        String finalFailure = null;
+        for (int attempt = 1; attempt <= CRYSTAL_LAB_NAVIGATION_ATTEMPTS; attempt++) {
+            if (!navigateToDirectSidebarDestination(SidebarDestination.CRYSTAL_LABORATORY)) {
+                finalFailure = "sidebar-navigation-failed";
+            } else {
+                tapCrystalLabTutorialDismissal();
+                waitForCrystalLabTransition(CRYSTAL_LAB_CITY_SETTLE_MS);
+
+                ImageSearchResultData anchor = locateCrystalLabBuildingAnchor();
+                if (anchor == null || !anchor.isFound()) {
+                    finalFailure = "building-anchor-missing";
+                } else {
+                    tapCrystalLabBuildingAnchor(anchor);
+                    waitForCrystalLabTransition(CRYSTAL_LAB_CITY_SETTLE_MS);
+                    if (isCrystalLabInterfaceVisible()) {
+                        broadcastInfo("Crystal Laboratory destination verified");
+                        return true;
+                    }
+                    finalFailure = "screen-validation-failed";
+                }
+            }
+
+            if (attempt < CRYSTAL_LAB_NAVIGATION_ATTEMPTS) {
+                broadcastWarn("Crystal Laboratory navigation attempt " + attempt + "/"
+                        + CRYSTAL_LAB_NAVIGATION_ATTEMPTS + " was not confirmed; recovering Home");
+                ensureCorrectScreenLocation(LaunchPoint.HOME);
+            }
+        }
+
+        String snapshot = finalFailure == null || "sidebar-navigation-failed".equals(finalFailure)
+                ? "snapshot=not-applicable"
+                : retainCrystalLabDiagnosticSnapshot(finalFailure);
+        broadcastWarn("Crystal Laboratory navigation failed after " + CRYSTAL_LAB_NAVIGATION_ATTEMPTS
+                + " bounded attempts; reason=" + finalFailure + "; " + snapshot);
+        return false;
+    }
+
+    ImageSearchResultData locateCrystalLabBuildingAnchor() {
+        return searcher.locatePatternMono(TemplatesEnum.CRYSTAL_LAB_BUILDING_ANCHOR,
+                TemplateSearchHelper.SearchConfig.builder()
+                        .withArea(CRYSTAL_LAB_BUILDING_ANCHOR)
+                        .withMaxAttempts(CRYSTAL_LAB_ANCHOR_CHECKS)
+                        .withDelay(CRYSTAL_LAB_CHECK_DELAY_MS)
+                        .withThreshold(90)
+                        .build());
+    }
+
+    boolean isCrystalLabInterfaceVisible() {
+        for (int check = 1; check <= CRYSTAL_LAB_UI_CHECKS; check++) {
+            ImageSearchResultData result = locateCrystalLabInterface();
+            if (result != null && result.isFound()) {
+                return true;
+            }
+            if (check < CRYSTAL_LAB_UI_CHECKS) {
+                waitForCrystalLabTransition(CRYSTAL_LAB_CHECK_DELAY_MS);
+            }
+        }
+        return false;
+    }
+
+    ImageSearchResultData locateCrystalLabInterface() {
+        return searcher.locatePattern(TemplatesEnum.VALIDATION_CRYSTAL_LAB_UI,
+                TemplateSearchHelper.SearchConfig.builder().withThreshold(90).build());
+    }
+
+    void tapCrystalLabTutorialDismissal() {
+        taps.tapInside(CRYSTAL_LAB_TUTORIAL_DISMISSAL);
+    }
+
+    void tapCrystalLabBuildingAnchor(ImageSearchResultData anchor) {
+        taps.tapInside(anchor);
+    }
+
+    void waitForCrystalLabTransition(long milliseconds) {
+        interruptibleWait(milliseconds);
+    }
+
+    RawImageData captureCrystalLabDiagnosticFrame() {
+        return emu.captureScreen(device);
+    }
+
+    DiagnosticSnapshotStore diagnosticSnapshotStore() {
+        return DiagnosticSnapshotStore.forCurrentWorkspace();
+    }
+
+    String retainCrystalLabDiagnosticSnapshot(String type) {
+        try {
+            RawImageData frame = captureCrystalLabDiagnosticFrame();
+            try {
+                ImageConverter.toBufferedImage(frame);
+            } catch (RuntimeException failure) {
+                return "snapshot=unavailable; reason=capture-returned-no-valid-frame";
+            }
+            return diagnosticSnapshotStore().write(frame, "crystallaboratory", type, Instant.now())
+                    .map(path -> "snapshot=" + path)
+                    .orElse("snapshot=unavailable; reason=write-failed");
+        } catch (RuntimeException failure) {
+            return "snapshot=unavailable; reason=" + failure.getClass().getSimpleName();
+        }
+    }
+
     public boolean openSidebarSection(SidebarSection section) {
         return sidebar.openSection(section);
     }
@@ -117,11 +232,15 @@ public class NavigationHelper {
         ensureCorrectScreenLocation(LaunchPoint.ANY);
         broadcastInfo("Navigating through sidebar to " + destination);
 
+        boolean reached;
         if (destination.openingPolicy() == SidebarDestination.OpeningPolicy.WILDERNESS_INTEL) {
-            return navigateToWildernessIntel(destination);
+            reached = navigateToWildernessIntel(destination);
+        } else if (destination == SidebarDestination.CRYSTAL_LABORATORY) {
+            reached = navigateToCrystalLaboratory();
+        } else {
+            reached = navigateToDirectSidebarDestination(destination);
         }
 
-        boolean reached = navigateToDirectSidebarDestination(destination);
         if (!reached) {
             broadcastWarn("Sidebar navigation failed: " + destination);
         }
