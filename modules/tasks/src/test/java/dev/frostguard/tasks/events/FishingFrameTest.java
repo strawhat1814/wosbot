@@ -27,6 +27,20 @@ class FishingFrameTest {
     }
 
     @Test
+    void identifiesTheWorldMapEventColumnOutsideTheCityShortcutBox() throws IOException {
+        var area = CommonGameAreas.FISHING_HOME_ENTRY;
+        try (var stream = FishingFrameTest.class.getResourceAsStream("/fishing/world-map-entry.png")) {
+            var result = OpenCvPatternLocator.locatePattern(Objects.requireNonNull(stream).readAllBytes(),
+                    TemplatesEnum.FISHING_HOME_ICON, area.topLeft(), area.bottomRight(),
+                    FishingMinigameRoutine.HOME_ENTRY_MATCH_THRESHOLD);
+            assertTrue(result.isFound(), result.toString());
+            assertTrue(result.getPoint().getX() > 630, result.toString());
+            assertTrue(result.getPoint().getY() > 250, result.toString());
+        }
+        assertFalse(match("world-map-entry", TemplatesEnum.FISHING_HOME_ICON, 475, 120, 630, 320).isFound());
+    }
+
+    @Test
     void identifiesTheHomeEntryBelowTheOldSearchBoundary() throws IOException {
         assertFalse(match("home-lower-entry", TemplatesEnum.FISHING_HOME_ICON, 475, 120, 630, 250).isFound());
         var area = CommonGameAreas.FISHING_HOME_ENTRY;

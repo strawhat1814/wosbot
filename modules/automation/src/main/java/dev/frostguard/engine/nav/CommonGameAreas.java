@@ -10,7 +10,8 @@ import dev.frostguard.api.domain.PointData;
 public final class CommonGameAreas {
 
     // Event shortcuts shift vertically as the active event list changes.
-    public static final AreaData FISHING_HOME_ENTRY = AreaData.of(475, 120, 630, 320);
+    // World-map column sits flush right and lower when Events/Deals occupy the top slots.
+    public static final AreaData FISHING_HOME_ENTRY = AreaData.of(475, 80, 720, 450);
     public static final AreaData FISHING_TOURNAMENT_TAB = AreaData.of(45, 105, 225, 175);
     public static final AreaData FISHING_ICE_CAST_BUTTON = AreaData.of(370, 1140, 670, 1240);
     public static final AreaData FISHING_FREE_BAIT = AreaData.of(497, 1095, 579, 1129);

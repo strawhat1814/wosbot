@@ -8,17 +8,22 @@ Experimental rewards-first workflow; not ready for unattended operation.
 - Verified layout: 720x1280 portrait, Winter season. Descent avoids all
   foreground objects, not just fish. Practice uses a 100m line and ten slots;
   the observed ordinary cast uses a 550m line and twenty slots.
-- Home shortcut detection covers the shifting event column down to 320px and
-  tolerates its animated art at 85% matching. This only opens the event page;
-  the title and bait-spending controls retain independent 90% verification.
+- Home shortcut detection covers the shifting event column through the
+  world-map right edge (475,80)-(720,450) and tolerates its animated art at
+  85% matching. The city shortcut sits inset; the world-map column is flush
+  right and lower when Events/Deals occupy the top slots. This only opens the
+  event page; the title and bait-spending controls retain independent 90%
+  verification.
 - The event remembers Club/leaderboard tabs under the same title. Verify the
   overview's Ice Fishing control, selecting the first tournament tab once when
   absent, before reading bait. Unverified navigation never authorizes a cast.
   A missing home shortcut, unverified title, or missing Ice Fishing control
-  is three 5-minute retries, then rest until the next UTC daily reset. That
-  rest is not completion. A verified overview or recovered paid stage clears
-  the counter. A Frostguard restart forgets it. Bait, line, loadout and cast
-  misses stay on a short delay and do not park until reset.
+  is three 5-minute retries, then rest until the next UTC daily reset. The
+  fourth miss captures one diagnostic PNG (`logs/snapshot/fishing/<utc>-unplayable.png`)
+  before that reset schedule. That rest is not
+  completion. A verified overview or recovered paid stage clears the counter.
+  A Frostguard restart forgets it. Bait, line, loadout and cast misses stay on
+  a short delay and do not park until reset.
 - On live event entry the first decoded frame read `710`, then subsequent
   frames read `7/10`. Bait verification uses a four-second polling budget for two
   agreeing distinct fresh frames using one retained OCR engine. Malformed text
