@@ -10,6 +10,7 @@ import dev.frostguard.engine.schedule.LaunchPoint;
 import dev.frostguard.engine.nav.CommonGameAreas;
 import dev.frostguard.engine.nav.CommonOCRSettings;
 import dev.frostguard.engine.schedule.DelayedTask;
+import dev.frostguard.tasks.diagnostics.TaskDiagnosticSnapshots;
 import dev.frostguard.vision.convert.GameTimeUtils;
 import dev.frostguard.vision.match.OpenCvPatternLocator;
 import dev.frostguard.vision.match.ImageRegionStability;
@@ -171,9 +172,11 @@ public class FishingMinigameRoutine extends DelayedTask {
         LocalDateTime retryAt = FishingPlayabilityRetryPolicy.retryAt(
                 now, GameTimeUtils.dailyResetTime(), consecutiveUnplayableMisses);
         if (FishingPlayabilityRetryPolicy.parksUntilReset(consecutiveUnplayableMisses)) {
+            String snapshot = captureUnplayableSnapshot();
             logInfo(reason + "; unplayable after " + consecutiveUnplayableMisses
                     + " consecutive misses; next check at daily reset "
-                    + retryAt.format(DATETIME_FORMATTER) + ". No premium spending authorized.");
+                    + retryAt.format(DATETIME_FORMATTER) + "; " + snapshot
+                    + ". No premium spending authorized.");
             consecutiveUnplayableMisses = 0;
         } else {
             logInfo(reason + "; unplayable miss " + consecutiveUnplayableMisses
@@ -183,6 +186,14 @@ public class FishingMinigameRoutine extends DelayedTask {
                     + ". No premium spending authorized.");
         }
         reschedule(retryAt);
+    }
+
+    private String captureUnplayableSnapshot() {
+        String type = FishingPlayabilityRetryPolicy.terminalSnapshotType(consecutiveUnplayableMisses);
+        if (type == null) {
+            return "snapshot=skipped";
+        }
+        return TaskDiagnosticSnapshots.capture(emuManager, EMULATOR_NUMBER, "fishing", type);
     }
 
     private int readFreeBait() {

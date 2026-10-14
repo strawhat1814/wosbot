@@ -23,6 +23,8 @@ class FishingPlayabilityRetryPolicyTest {
         assertEquals(DAILY_RESET, FishingPlayabilityRetryPolicy.retryAt(NOW, DAILY_RESET, 5));
         assertFalse(FishingPlayabilityRetryPolicy.parksUntilReset(3));
         assertTrue(FishingPlayabilityRetryPolicy.parksUntilReset(4));
+        assertEquals(null, FishingPlayabilityRetryPolicy.terminalSnapshotType(3));
+        assertEquals("unplayable", FishingPlayabilityRetryPolicy.terminalSnapshotType(4));
     }
 
     @Test

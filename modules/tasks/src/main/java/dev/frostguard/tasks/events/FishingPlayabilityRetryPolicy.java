@@ -28,6 +28,10 @@ final class FishingPlayabilityRetryPolicy {
         return consecutiveMisses > SHORT_RETRY_LIMIT;
     }
 
+    static String terminalSnapshotType(int consecutiveMisses) {
+        return parksUntilReset(consecutiveMisses) ? "unplayable" : null;
+    }
+
     private static LocalDateTime earlierOf(LocalDateTime first, LocalDateTime second) {
         return first.isBefore(second) ? first : second;
     }
