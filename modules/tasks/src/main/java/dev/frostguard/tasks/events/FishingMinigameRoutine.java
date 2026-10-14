@@ -10,6 +10,7 @@ import dev.frostguard.engine.schedule.LaunchPoint;
 import dev.frostguard.engine.nav.CommonGameAreas;
 import dev.frostguard.engine.nav.CommonOCRSettings;
 import dev.frostguard.engine.schedule.DelayedTask;
+import dev.frostguard.vision.convert.GameTimeUtils;
 import dev.frostguard.vision.match.OpenCvPatternLocator;
 import dev.frostguard.vision.match.ImageRegionStability;
 import dev.frostguard.vision.ocr.OcrEngine;
@@ -30,6 +31,7 @@ public class FishingMinigameRoutine extends DelayedTask {
     private int restartsUsed, maxRestarts, catchTarget;
     private boolean useLantern, useStabilizer, requireSpecialItems, activeLantern;
     private int specialCastsUsed, maxSpecialCasts;
+    private int consecutiveUnplayableMisses;
 
     public FishingMinigameRoutine(AccountDescriptor profile, TpDailyTaskEnum type) {
         super(profile, type);
@@ -75,10 +77,13 @@ public class FishingMinigameRoutine extends DelayedTask {
                     awaitDepthMonitor(depth);
                     freshFrame();
                     boolean resumed = resumeExistingCast();
-                    if (resumed) recoveryOnly |= !retryOwnedStage;
-                    else if (retryOwnedStage) {
+                    if (resumed) {
+                        markPlayable();
+                        recoveryOnly |= !retryOwnedStage;
+                    } else if (retryOwnedStage) {
                         throw new IllegalStateException("Suspended retry stage unverified; no replacement bait authorized");
                     } else if (exitVerifiedHaul()) {
+                        markPlayable();
                         defer(30, "Existing haul recovered; preserving remaining bait");
                         return;
                     }
@@ -86,16 +91,19 @@ public class FishingMinigameRoutine extends DelayedTask {
                         freshFrame();
                         if (!find(TemplatesEnum.FISHING_TITLE, AreaData.of(85, 0, 500, 80)).isFound()) {
                             var entry = waitFor(TemplatesEnum.FISHING_HOME_ICON, CommonGameAreas.FISHING_HOME_ENTRY, 8000);
-                            if (!entry.isFound()) { defer(15, "Fishing entry unavailable"); return; }
+                            if (!entry.isFound()) { deferUnplayable("Fishing entry unavailable"); return; }
                             safeTap(entry);
                         }
                         if (!waitFor(TemplatesEnum.FISHING_TITLE, AreaData.of(85, 0, 500, 80), 8000).isFound()) {
-                            defer(5, "Fishing page unverified"); return;
+                            deferUnplayable("Fishing page unverified"); return;
                         }
                         // Reopening from home can reveal a paid stage that was invisible at task entry.
                         resumed = resumeExistingCast();
-                        if (resumed) recoveryOnly = true;
-                        else if (exitVerifiedHaul()) {
+                        if (resumed) {
+                            markPlayable();
+                            recoveryOnly = true;
+                        } else if (exitVerifiedHaul()) {
+                            markPlayable();
                             defer(30, "Existing haul recovered; preserving remaining bait");
                             return;
                         }
@@ -107,9 +115,10 @@ public class FishingMinigameRoutine extends DelayedTask {
                             requireRecentObservation();
                             tapInside(CommonGameAreas.FISHING_TOURNAMENT_TAB);
                             if (!waitFor(TemplatesEnum.FISHING_ICE_BUTTON, CommonGameAreas.FISHING_ICE_CAST_BUTTON, 5000).isFound()) {
-                                defer(5, "Fishing overview controls unverified; no bait selected"); return;
+                                deferUnplayable("Fishing overview controls unverified; no bait selected"); return;
                             }
                         }
+                        markPlayable();
                         int bait = readFreeBait();
                         if (bait <= 0) { defer(bait == 0 ? 60 : 5, bait == 0 ? "No free bait remains" : "Free bait unverified"); return; }
                         long maximumDeadline = System.nanoTime() + 4_000_000_000L;
@@ -150,6 +159,30 @@ public class FishingMinigameRoutine extends DelayedTask {
     private void defer(int minutes, String reason) {
         logInfo(reason + "; next check in " + minutes + " minutes. No premium spending authorized.");
         reschedule(LocalDateTime.now().plusMinutes(minutes));
+    }
+
+    private void markPlayable() {
+        consecutiveUnplayableMisses = 0;
+    }
+
+    private void deferUnplayable(String reason) {
+        consecutiveUnplayableMisses++;
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime retryAt = FishingPlayabilityRetryPolicy.retryAt(
+                now, GameTimeUtils.dailyResetTime(), consecutiveUnplayableMisses);
+        if (FishingPlayabilityRetryPolicy.parksUntilReset(consecutiveUnplayableMisses)) {
+            logInfo(reason + "; unplayable after " + consecutiveUnplayableMisses
+                    + " consecutive misses; next check at daily reset "
+                    + retryAt.format(DATETIME_FORMATTER) + ". No premium spending authorized.");
+            consecutiveUnplayableMisses = 0;
+        } else {
+            logInfo(reason + "; unplayable miss " + consecutiveUnplayableMisses
+                    + "/" + FishingPlayabilityRetryPolicy.SHORT_RETRY_LIMIT
+                    + "; next check in " + FishingPlayabilityRetryPolicy.RETRY_MINUTES
+                    + " minutes at " + retryAt.format(DATETIME_FORMATTER)
+                    + ". No premium spending authorized.");
+        }
+        reschedule(retryAt);
     }
 
     private int readFreeBait() {

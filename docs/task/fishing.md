@@ -14,6 +14,11 @@ Experimental rewards-first workflow; not ready for unattended operation.
 - The event remembers Club/leaderboard tabs under the same title. Verify the
   overview's Ice Fishing control, selecting the first tournament tab once when
   absent, before reading bait. Unverified navigation never authorizes a cast.
+  A missing home shortcut, unverified title, or missing Ice Fishing control
+  is three 5-minute retries, then rest until the next UTC daily reset. That
+  rest is not completion. A verified overview or recovered paid stage clears
+  the counter. A Frostguard restart forgets it. Bait, line, loadout and cast
+  misses stay on a short delay and do not park until reset.
 - On live event entry the first decoded frame read `710`, then subsequent
   frames read `7/10`. Bait verification uses a four-second polling budget for two
   agreeing distinct fresh frames using one retained OCR engine. Malformed text
