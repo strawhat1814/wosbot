@@ -18,6 +18,14 @@ class FishingFrameTest {
 
     @Test
     void identifiesTheHomeEntryAndOnlyTheSafeCastControls() throws IOException {
+        var entry = CommonGameAreas.FISHING_HOME_ENTRY;
+        try (var stream = FishingFrameTest.class.getResourceAsStream("/fishing/home.png")) {
+            var result = OpenCvPatternLocator.locatePattern(Objects.requireNonNull(stream).readAllBytes(),
+                    TemplatesEnum.FISHING_HOME_ICON, entry.topLeft(), entry.bottomRight(),
+                    FishingMinigameRoutine.HOME_ENTRY_MATCH_THRESHOLD);
+            assertTrue(result.isFound(), result.toString());
+            assertTrue(result.getPoint().getY() < 250, result.toString());
+        }
         assertHit("home", TemplatesEnum.FISHING_HOME_ICON, 480, 120, 620, 240);
         assertHit("event", TemplatesEnum.FISHING_TITLE, 90, 0, 500, 80);
         assertHit("event", TemplatesEnum.FISHING_ICE_BUTTON, 370, 1140, 670, 1240);
