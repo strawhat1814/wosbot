@@ -41,6 +41,23 @@ class FishingFrameTest {
     }
 
     @Test
+    void identifiesTheLowerCityColumnSlotWhenSignInPushesTheShortcutDown() throws IOException {
+        var area = CommonGameAreas.FISHING_HOME_ENTRY;
+        try (var stream = FishingFrameTest.class.getResourceAsStream("/fishing/city-column-entry.png")) {
+            var result = OpenCvPatternLocator.locatePattern(Objects.requireNonNull(stream).readAllBytes(),
+                    TemplatesEnum.FISHING_HOME_ICON, area.topLeft(), area.bottomRight(),
+                    FishingMinigameRoutine.HOME_ENTRY_MATCH_THRESHOLD);
+            assertTrue(result.isFound(), result.toString());
+            assertTrue(result.getPoint().getY() > 390, result.toString());
+        }
+        try (var stream = FishingFrameTest.class.getResourceAsStream("/fishing/city-column-entry.png")) {
+            assertFalse(OpenCvPatternLocator.locatePattern(Objects.requireNonNull(stream).readAllBytes(),
+                    TemplatesEnum.FISHING_HOME_ICON, new PointData(475, 115), new PointData(720, 450),
+                    FishingMinigameRoutine.HOME_ENTRY_MATCH_THRESHOLD).isFound());
+        }
+    }
+
+    @Test
     void identifiesTheHomeEntryBelowTheOldSearchBoundary() throws IOException {
         assertFalse(match("home-lower-entry", TemplatesEnum.FISHING_HOME_ICON, 475, 120, 630, 250).isFound());
         var area = CommonGameAreas.FISHING_HOME_ENTRY;

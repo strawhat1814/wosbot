@@ -8,10 +8,10 @@ Experimental rewards-first workflow; not ready for unattended operation.
 - Verified layout: 720x1280 portrait, Winter season. Descent avoids all
   foreground objects, not just fish. Practice uses a 100m line and ten slots;
   the observed ordinary cast uses a 550m line and twenty slots.
-- Home shortcut detection covers the shifting event column through the
-  world-map right edge (475,80)-(720,450) and tolerates its animated art at
-  85% matching. The city shortcut sits inset; the world-map column is flush
-  right and lower when Events/Deals occupy the top slots. This only opens the
+- Home shortcut detection covers both shortcut bands in (475,115)-(720,580):
+  the inset city art and the flush-right column. The top edge stays below the
+  HUD bar. Sign-in/Deals can push the column slot below y=450; that lower
+  position is still inside the box. Matching stays at 85%. This only opens the
   event page; the title and bait-spending controls retain independent 90%
   verification.
 - The event remembers Club/leaderboard tabs under the same title. Verify the
