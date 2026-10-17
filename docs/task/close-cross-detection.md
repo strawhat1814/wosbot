@@ -16,7 +16,7 @@ retains its own narrow search, threshold, and bounded tap attempts.
 ## Evidence and limits
 
 Initialization now uses the shared detector in its measured
-`(540, 65)`–`(719, 280)` area, after higher-priority startup blockers have been
+`(540, 20)`–`(719, 280)` area, after higher-priority startup blockers have been
 checked. The previous `(540, 65)`–`(680, 240)` bounds cannot contain the
 Craftsman's Treasure X measured at `(637, 202)`–`(691, 256)` on 10 October
 2026. Its white glyph on a blue canopy also does not score with the original
@@ -29,11 +29,22 @@ so the narrower custom-area overload is used. The existing three dismissal
 limit and fresh home/world postcondition remain in place. The runtime passes the
 raw emulator frame directly to avoid an intermediate image conversion.
 
-The saved-frame set contains six positive close-control crops spanning
+The reviewed Myriad Bazaar frame from 17 October 2026 adds a third masked
+template for its compact white X, centred around `(680, 43)`. The old y=65
+boundary excludes that control; the y=20 boundary detects it while retaining
+the right-side and y=240 limits. Startup treats that cross as a generic
+closeable-overlay control; it does not need to identify Myriad Bazaar before
+tapping. The generic high band remains available for other future overlays,
+subject to the same bounded dismissal and fresh home/world postcondition.
+
+The saved-frame set contains seven positive close-control crops spanning
 top-right and middle-right positions and one nearby green plus negative. Earlier
 source captures contained identifying account or map details; fixtures retain
 only manually reviewed crops around the relevant controls. The detector and
-startup integration have saved-frame tests, and annotated frames are in
+startup integration have saved-frame tests. The Android launcher, mandatory
+update, resource-download, and Welcome back frames remain explicit startup
+negatives, while offer and Craftsman's Treasure frames prove existing overlays
+still detect after the high-band extension. Annotated frames are in
 `tools/close-cross-detection/evidence/`.
 
 The initial 78% threshold is empirical for this small set. The masked live

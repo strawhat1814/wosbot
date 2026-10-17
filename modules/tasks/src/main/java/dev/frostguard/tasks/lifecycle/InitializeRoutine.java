@@ -85,7 +85,7 @@ public class InitializeRoutine extends DelayedTask {
 	private static final PointData UPDATE_TITLE_AREA_BOTTOM_RIGHT = new PointData(470, 350);
 	private static final PointData UPDATE_BUTTON_AREA_TOP_LEFT = new PointData(200, 850);
 	private static final PointData UPDATE_BUTTON_AREA_BOTTOM_RIGHT = new PointData(520, 1050);
-	private static final AreaData CLOSEABLE_OVERLAY_SEARCH_AREA = AreaData.of(540, 65, 719, 280);
+	private static final AreaData CLOSEABLE_OVERLAY_SEARCH_AREA = AreaData.of(540, 20, 719, 280);
 	private static final int MAX_CLOSEABLE_OVERLAY_CENTER_Y = 240;
 	private static final int UPDATE_PATTERN_THRESHOLD = 90;
 	private static final int UPDATE_POSTCONDITION_TIMEOUT_MINUTES = 10;
@@ -553,6 +553,10 @@ public class InitializeRoutine extends DelayedTask {
 		if (detectedClose == null) {
 			return false;
 		}
+		return dismissDetectedCloseableStartupOverlay(detectedClose);
+	}
+
+	private boolean dismissDetectedCloseableStartupOverlay(CloseCrossDetector.Detection detectedClose) {
 		ImageSearchResultData close = ImageSearchResultData.hit(
 				detectedClose.center().getX(), detectedClose.center().getY(), detectedClose.score(),
 				detectedClose.width(), detectedClose.height());
@@ -570,6 +574,7 @@ public class InitializeRoutine extends DelayedTask {
 			return false;
 		}
 		lastVerifiedStartupState = "closeable startup overlay close action sent";
+		logInfo("Tapped the verified startup-overlay close control; waiting for a fresh home/world postcondition.");
 		return true;
 	}
 

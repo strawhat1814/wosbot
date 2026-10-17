@@ -74,6 +74,19 @@ class CloseCrossDetectorTest {
     }
 
     @Test
+    void locatesMyriadBazaarCrossInTheNewHighStartupBand() throws IOException {
+        BufferedImage frame = read("myriad-bazaar-high-close-control-20261017.png");
+
+        assertTrue(CloseCrossDetector.locate(frame, AreaData.of(540, 65, 719, 280)).isEmpty(),
+                "the former y=65 lower boundary must exclude Myriad's high close control");
+        List<CloseCrossDetector.Detection> detections = CloseCrossDetector.locate(
+                frame, AreaData.of(540, 20, 719, 280));
+
+        assertTrue(detections.stream().anyMatch(candidate -> near(candidate.center(), 680, 43)),
+                () -> "Myriad high close cross was not found: " + detections);
+    }
+
+    @Test
     void selectsHalfRightAndAcceptsExplicitArea() throws IOException {
         BufferedImage source = read("cross-tip-middle-right.png");
         BufferedImage frame = new BufferedImage(720, 1280, BufferedImage.TYPE_INT_RGB);

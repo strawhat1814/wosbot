@@ -30,7 +30,9 @@ public final class CloseCrossDetector {
             new TemplateSpec("/templates/common/closeCross.png", SCALES),
             // The reviewed Craftsman capture is native 55 px. Smaller variants matched
             // unrelated dialog decoration in the startup-negative frame set.
-            new TemplateSpec("/templates/common/closeCrossCraftsman.png", new double[] {1.00}));
+            new TemplateSpec("/templates/common/closeCrossCraftsman.png", new double[] {1.00}),
+            // The Myriad Bazaar close glyph is a compact solid white X on a pale blue backing.
+            new TemplateSpec("/templates/common/closeCrossMyriadBazaar.png", new double[] {1.00}));
     private static final int MAX_MATCHES_PER_SCALE = 12;
     private static final int MAX_RESULTS = 32;
 

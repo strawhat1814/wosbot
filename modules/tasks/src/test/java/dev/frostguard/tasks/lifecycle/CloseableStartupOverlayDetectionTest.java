@@ -18,6 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class CloseableStartupOverlayDetectionTest {
 
     private static final AreaData PREVIOUS_STARTUP_CLOSE_AREA = AreaData.of(540, 65, 680, 240);
+    private static final AreaData PREVIOUS_HIGH_CLOSE_AREA = AreaData.of(540, 65, 719, 280);
 
     @Test
     void detectsStartupCloseControlUsingReusableDetector() throws IOException {
@@ -65,11 +66,33 @@ class CloseableStartupOverlayDetectionTest {
     }
 
     @Test
+    void detectsMyriadBazaarHighCloseControlInTheGenericStartupBand() throws IOException {
+        String fixture = "/startup/myriad-bazaar-overlay-20261017.png";
+        RawImageData frame = rawRgbaFrame(frame(fixture));
+
+        assertTrue(CloseCrossDetector.locate(frame, PREVIOUS_HIGH_CLOSE_AREA).isEmpty(),
+                "the previous y=65 boundary must exclude the Myriad close control");
+        List<CloseCrossDetector.Detection> detections = InitializeRoutine.locateCloseableStartupControls(frame);
+
+        assertTrue(detections.stream().anyMatch(candidate ->
+                        Math.abs(candidate.center().getX() - 680) <= 8
+                                && Math.abs(candidate.center().getY() - 43) <= 8),
+                () -> "expected Myriad close cross near (680,43), got " + detections);
+    }
+
+    @Test
+    void preservesDetectionForOtherCloseableStartupOverlays() throws IOException {
+        assertContainsCloseControl("/startup/closeable-offer-overlay-20260821.png", 610, 130);
+        assertContainsCloseControl("/startup/craftsman-treasure-close-control-20261010.png", 664, 229);
+    }
+
+    @Test
     void rejectsHigherPriorityAndNonCloseableStartupDialogs() throws IOException {
         for (String path : new String[] {
                 "/startup/mandatory-update-dialog-20260820.png",
                 "/startup/resource-download-prompt-20260817.png",
-                "/startup/welcome-back-dialog-20260821.png" }) {
+                "/startup/welcome-back-dialog-20260821.png",
+                "/startup/android-launcher-no-close-control-20261016.png" }) {
             List<CloseCrossDetector.Detection> detections = inspect(path);
             assertTrue(detections.isEmpty(), path + ": " + detections);
         }
@@ -81,6 +104,13 @@ class CloseableStartupOverlayDetectionTest {
 
     private static List<CloseCrossDetector.Detection> inspect(String path, AreaData searchArea) throws IOException {
         return CloseCrossDetector.locate(rawRgbaFrame(frame(path)), searchArea);
+    }
+
+    private static void assertContainsCloseControl(String path, int x, int y) throws IOException {
+        assertTrue(inspect(path).stream().anyMatch(candidate ->
+                        Math.abs(candidate.center().getX() - x) <= 8
+                                && Math.abs(candidate.center().getY() - y) <= 8),
+                () -> path + " did not retain its close control");
     }
 
     private static BufferedImage frame(String path) throws IOException {
