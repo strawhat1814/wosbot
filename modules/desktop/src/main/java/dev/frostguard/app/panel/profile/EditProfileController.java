@@ -11,18 +11,21 @@ import javafx.fxml.Initializable;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
+import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.Slider;
 import javafx.scene.control.TextField;
 import javafx.scene.control.TextFormatter;
 import javafx.scene.layout.FlowPane;
 import javafx.stage.Stage;
+import javafx.util.StringConverter;
 
 import java.net.URL;
 import java.util.ResourceBundle;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 import java.util.TreeSet;
 import java.util.function.UnaryOperator;
 
@@ -84,6 +87,9 @@ public class EditProfileController implements Initializable {
     private TextField txtCharacterServer;
 
     @FXML
+    private ComboBox<SharedLoginPeerOption> comboSharedLoginPeer;
+
+    @FXML
     private FlowPane tagChoicesPane;
 
     @FXML
@@ -95,6 +101,7 @@ public class EditProfileController implements Initializable {
     private ProfileManagerActionController actionController;
     private Stage dialogStage;
     private boolean saveClicked = false;
+    private Long previousSharedLoginPeerId;
     private FieldValidationPresenter profileNamePresenter;
     private FieldValidationPresenter emulatorNumberPresenter;
     private FieldValidationPresenter reconnectionTimePresenter;
@@ -107,6 +114,19 @@ public class EditProfileController implements Initializable {
         reconnectionTimePresenter = new FieldValidationPresenter(txtReconnectionTime, lblReconnectionTimeError);
         installValidationListeners();
         bindPriorityLabel();
+        if (comboSharedLoginPeer != null) {
+            comboSharedLoginPeer.setConverter(new StringConverter<>() {
+                @Override
+                public String toString(SharedLoginPeerOption option) {
+                    return option == null ? "" : option.label();
+                }
+
+                @Override
+                public SharedLoginPeerOption fromString(String string) {
+                    return null;
+                }
+            });
+        }
     }
 
     public void setProfileToEdit(ProfileAux profile) {
@@ -116,6 +136,7 @@ public class EditProfileController implements Initializable {
 
     public void setActionController(ProfileManagerActionController controller) {
         this.actionController = controller;
+        populateSharedLoginPeerChoices();
         populateTagChoices();
     }
 
@@ -139,8 +160,35 @@ public class EditProfileController implements Initializable {
             txtCharacterName.setText(orBlank(profileToEdit.getCharacterName()));
             txtCharacterAllianceCode.setText(orBlank(profileToEdit.getCharacterAllianceCode()));
             txtCharacterServer.setText(orBlank(profileToEdit.getCharacterServer()));
+            previousSharedLoginPeerId = profileToEdit.getSharedLoginPeerProfileId();
+            populateSharedLoginPeerChoices();
             populateTagChoices();
         }
+    }
+
+    private void populateSharedLoginPeerChoices() {
+        if (comboSharedLoginPeer == null || profileToEdit == null || actionController == null) {
+            return;
+        }
+        List<SharedLoginPeerOption> options = new ArrayList<>();
+        options.add(SharedLoginPeerOption.none());
+        for (ProfileAux candidate : actionController.listProfilesForPeerPicker()) {
+            if (candidate == null || candidate.getId() == null) {
+                continue;
+            }
+            if (Objects.equals(candidate.getId(), profileToEdit.getId())) {
+                continue;
+            }
+            options.add(new SharedLoginPeerOption(candidate.getId(),
+                    candidate.getName() + " (emu " + candidate.getEmulatorNumber() + ")"));
+        }
+        comboSharedLoginPeer.getItems().setAll(options);
+        Long selectedId = profileToEdit.getSharedLoginPeerProfileId();
+        SharedLoginPeerOption selected = options.stream()
+                .filter(option -> Objects.equals(option.profileId(), selectedId))
+                .findFirst()
+                .orElse(options.get(0));
+        comboSharedLoginPeer.getSelectionModel().select(selected);
     }
 
     private void populateTagChoices() {
@@ -182,7 +230,13 @@ public class EditProfileController implements Initializable {
         }
 
         applyFormValues();
-        boolean saved = actionController.saveProfile(profileToEdit);
+        String peerError = validateSharedLoginPeerSelection();
+        if (peerError != null) {
+            showAlert(Alert.AlertType.ERROR, "Shared login peer", null, peerError);
+            return;
+        }
+        boolean saved = actionController.saveProfileWithSharedLoginPeer(
+                profileToEdit, previousSharedLoginPeerId);
 
         if (saved) {
             saveClicked = true;
@@ -259,7 +313,43 @@ public class EditProfileController implements Initializable {
         profileToEdit.setCharacterName(blankToNull(txtCharacterName));
         profileToEdit.setCharacterAllianceCode(blankToNullUppercase(txtCharacterAllianceCode));
         profileToEdit.setCharacterServer(blankToNull(txtCharacterServer));
+        SharedLoginPeerOption peer = comboSharedLoginPeer == null
+                ? null
+                : comboSharedLoginPeer.getSelectionModel().getSelectedItem();
+        profileToEdit.setSharedLoginPeerProfileId(peer == null ? null : peer.profileId());
         profileToEdit.setTags(tagChoices.stream().filter(CheckBox::isSelected).map(CheckBox::getText).toList());
+    }
+
+    private String validateSharedLoginPeerSelection() {
+        Long peerId = profileToEdit.getSharedLoginPeerProfileId();
+        if (peerId == null) {
+            return null;
+        }
+        if (blankToNull(txtCharacterName) == null && blankToNull(txtCharacterId) == null) {
+            return "Set Character name (or ID) before linking a shared login peer.";
+        }
+        ProfileAux peer = actionController.listProfilesForPeerPicker().stream()
+                .filter(candidate -> Objects.equals(candidate.getId(), peerId))
+                .findFirst()
+                .orElse(null);
+        if (peer == null) {
+            return "Shared login peer profile was not found.";
+        }
+        String ownEmu = txtEmulatorNumber.getText() == null ? "" : txtEmulatorNumber.getText().trim();
+        if (ownEmu.equals(peer.getEmulatorNumber())) {
+            return "Shared login peer must use a different emulator.";
+        }
+        if ((peer.getCharacterName() == null || peer.getCharacterName().isBlank())
+                && (peer.getCharacterId() == null || peer.getCharacterId().isBlank())) {
+            return "Peer profile '" + peer.getName() + "' needs a Character name (or ID).";
+        }
+        return null;
+    }
+
+    record SharedLoginPeerOption(Long profileId, String label) {
+        static SharedLoginPeerOption none() {
+            return new SharedLoginPeerOption(null, "(none)");
+        }
     }
 
     private long parseLongOrZero(TextField textField) {

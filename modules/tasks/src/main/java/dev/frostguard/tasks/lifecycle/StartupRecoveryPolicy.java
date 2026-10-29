@@ -4,7 +4,11 @@ import java.time.Duration;
 
 final class StartupRecoveryPolicy {
 
-    static final int MAX_UNKNOWN_BLOCKER_BACK_ATTEMPTS = 1;
+    /**
+     * Nested mid-task UIs (Intel, Alliance, Mail, deploy, …) left open after
+     * ADB recovery often need several Back presses to reach home/world.
+     */
+    static final int MAX_UNKNOWN_BLOCKER_BACK_ATTEMPTS = 4;
     static final Duration UNKNOWN_BLOCKER_COOLDOWN = Duration.ofMinutes(15);
     static final Duration PLAY_STORE_REDIRECT_COOLDOWN = Duration.ofHours(1);
     static final Duration UPDATE_FOLLOW_UP_COOLDOWN = Duration.ofMinutes(15);

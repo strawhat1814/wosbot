@@ -41,6 +41,11 @@ After two Survivor deployments, wait 20 seconds before taking a fresh marker
 snapshot. Never retain and tap the marker coordinates detected before that
 cooldown because the Intel map may change while the task waits.
 
+`Recall Gather Troops` is the only setting that recalls gather marches before
+Intel. With that option off, gather marches stay out, including when
+`Use Smart Intel Processing` is also off. Smart processing checks march
+capacity at deployment and does not request a full gather recall.
+
 Intel Beast deployment follows these constraints:
 
 - attempt deployment without a March Queue pre-scan;

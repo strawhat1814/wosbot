@@ -112,6 +112,7 @@ public class ProfileRepository {
 				profile.setAvatarName(descriptor.getCharacterName());
 				profile.setGuildTag(descriptor.getCharacterAllianceCode());
 				profile.setRealm(descriptor.getCharacterServer());
+				profile.setSharedLoginPeerProfileId(descriptor.getSharedLoginPeerProfileId());
 				return true;
 			});
 		} catch (Exception ex) {
@@ -236,7 +237,7 @@ public class ProfileRepository {
 	private static final String DESCRIPTOR_PROJECTION =
 		"SELECT new dev.frostguard.api.domain.AccountDescriptor(" +
 			"p.id, p.label, p.deviceIndex, p.active, p.weight, p.retryInterval, " +
-			"p.avatarId, p.avatarName, p.guildTag, p.realm" +
+			"p.avatarId, p.avatarName, p.guildTag, p.realm, p.sharedLoginPeerProfileId" +
 		") FROM Profile p";
 
 	private static final String CONFIG_PROJECTION =

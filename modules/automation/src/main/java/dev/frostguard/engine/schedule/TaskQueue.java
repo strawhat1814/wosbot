@@ -48,6 +48,9 @@ import dev.frostguard.engine.service.ActionRequiredIncidentService;
 import dev.frostguard.engine.service.TaskFailureIncidentService;
 import dev.frostguard.engine.service.ConfigService;
 import dev.frostguard.engine.service.LoggingService;
+import dev.frostguard.engine.sharedlogin.SharedLoginPair;
+import dev.frostguard.engine.sharedlogin.SharedLoginPairGate;
+import dev.frostguard.engine.sharedlogin.SharedLoginRecovery;
 import dev.frostguard.engine.service.ProfileService;
 import dev.frostguard.engine.service.ScheduleService;
 import dev.frostguard.engine.service.TaskManagementService;
@@ -104,7 +107,29 @@ public class TaskQueue {
 
     // ---- queue manipulation ------------------------------------------------
 
-    public synchronized void enqueue(DelayedTask task) { taskBacklog.offer(task); }
+    public synchronized void enqueue(DelayedTask task) {
+        if (task == null) {
+            return;
+        }
+        // HomeNotFound / ADB / shared-login recovery can fire many times in one minute.
+        // Keep a single Initialize in the backlog so stacks do not run back-to-back.
+        if (task.getTpTask() == TpDailyTaskEnum.INITIALIZE) {
+            DelayedTask present = taskBacklog.stream()
+                    .filter(existing -> existing.getTpTask() == TpDailyTaskEnum.INITIALIZE)
+                    .findFirst()
+                    .orElse(null);
+            if (present != null) {
+                taskBacklog.remove(present);
+                present.setProfile(profile);
+                present.clearStaminaDeferral();
+                present.reschedule(LocalDateTime.now());
+                taskBacklog.offer(present);
+                emitInfoTask(present, "Coalesced duplicate Initialize; bumped to NOW");
+                return;
+            }
+        }
+        taskBacklog.offer(task);
+    }
 
     public synchronized boolean dequeue(TpDailyTaskEnum kind) {
         DelayedTask ref = DelayedTaskRegistry.create(kind, profile);
@@ -636,6 +661,28 @@ public class TaskQueue {
         while (taskBacklog.peek() != null && taskBacklog.peek().getDelay(TimeUnit.MILLISECONDS) <= 0)
             batch.add(taskBacklog.poll());
 
+        if (!SharedLoginPairGate.allowsAutomation(profile)) {
+            DelayedTask initialize = batch.stream()
+                    .filter(task -> task.getTpTask() == TpDailyTaskEnum.INITIALIZE)
+                    .findFirst()
+                    .orElse(null);
+            batch.stream().filter(task -> task != initialize).forEach(taskBacklog::offer);
+            if (initialize == null) {
+                ensureSharedLoginInitializeQueued();
+                broadcastStatus("Paused — shared login not ready");
+                statusModel.setDelayUntil(LocalDateTime.now().plusSeconds(2));
+                return null;
+            }
+            if (initialize.getDelay(TimeUnit.MILLISECONDS) > 0) {
+                taskBacklog.offer(initialize);
+                statusModel.setDelayUntil(initialize.getScheduled());
+                broadcastStatus("Paused — shared login not ready");
+                return null;
+            }
+            emitInfo("Shared login gate: only Initialize may run until both characters are correct");
+            return initialize;
+        }
+
         DelayedTask winner = batch.stream()
                 .max(Comparator.comparingInt(rankingStrategy::getPriority))
                 .orElse(batch.get(0));
@@ -643,7 +690,18 @@ public class TaskQueue {
         return winner;
     }
 
+    private synchronized void ensureSharedLoginInitializeQueued() {
+        forceInitialInitialize = true;
+        boolean queued = taskBacklog.stream().anyMatch(task -> task.getTpTask() == TpDailyTaskEnum.INITIALIZE);
+        if (!queued) {
+            enqueue(DelayedTaskRegistry.create(TpDailyTaskEnum.INITIALIZE, profile));
+        }
+    }
+
     private void tryIdleInjection() {
+        if (!SharedLoginPairGate.allowsAutomation(profile)) {
+            return;
+        }
         if (DailyIdlePausePolicy.isActive(profile) || BearTrapProtectionPolicy.isFullPauseActive(profile)) {
             return;
         }
@@ -667,12 +725,23 @@ public class TaskQueue {
             emitInfo("Skipping task execution during shutdown: " + task.getTaskName());
             return false;
         }
+        if (task.getTpTask() != TpDailyTaskEnum.INITIALIZE
+                && !SharedLoginPairGate.allowsAutomation(profile)) {
+            emitWarnTask(task, "Blocked — shared login not ready; only Initialize until characters match");
+            synchronized (this) {
+                taskBacklog.offer(task);
+            }
+            ensureSharedLoginInitializeQueued();
+            broadcastStatus("Paused — shared login not ready");
+            return false;
+        }
         if (deferForDailyIdlePause(task) || deferForBearTrapProtection(task)) {
             return false;
         }
         if (task.getTpTask() == TpDailyTaskEnum.INITIALIZE
                 && !idleWakeInitializationPending
-                && !shouldRunInitialize()) {
+                && !shouldRunInitialize()
+                && SharedLoginPairGate.allowsAutomation(profile)) {
             emitInfoTask(task, "Skipping Initialize - no imminent tasks"); return false;
         }
         LocalDateTime priorSchedule = task.getScheduled();
@@ -694,7 +763,10 @@ public class TaskQueue {
             task.run();
             // Keep the initial force flag until Initialize reports success. A profile cooldown
             // persists and re-enqueues Initialize for the requested retry time instead.
-            if (task.getTpTask() == TpDailyTaskEnum.INITIALIZE && !task.isRecurring()) {
+            // Shared-login pairs stay forced on Initialize until the pair gate is ready.
+            if (task.getTpTask() == TpDailyTaskEnum.INITIALIZE
+                    && !task.isRecurring()
+                    && SharedLoginPairGate.allowsAutomation(profile)) {
                 forceInitialInitialize = false;
             }
             long elapsed = (System.currentTimeMillis() - t0) / 1000;
@@ -1029,9 +1101,76 @@ public class TaskQueue {
     }
 
     private void onReconnectNeeded(ProfileInReconnectStateException ex) {
+        if (startSharedLoginHandshakeRecovery("reconnect detected")) {
+            return;
+        }
         Long mins = profile.getReconnectionTime();
         if (mins != null && mins > 0) { emitInfo("Reconnect pause: " + mins + " min"); statusModel.setReconnectAt(mins); }
         else { emitError("No reconnect time configured"); attemptReconnect(); }
+    }
+
+    /**
+     * For mutually paired shared-login profiles, skip the reconnection-time pause and
+     * re-enter the coordinated handshake on both emulators.
+     *
+     * @return true when this profile is paired and recovery was started
+     */
+    boolean startSharedLoginHandshakeRecovery(String reason) {
+        Optional<SharedLoginPair> pair = SharedLoginRecovery.resolvePair(profile);
+        if (pair.isEmpty()) {
+            return false;
+        }
+        SharedLoginPairGate.markPending(pair.get());
+        SharedLoginRecovery.begin(pair.get());
+        emitInfo("Shared login handshake recovery (" + reason + "); automation gated until characters match");
+        forceInitialInitialize = true;
+        runNow(TpDailyTaskEnum.INITIALIZE, false);
+        requestPeerSharedLoginHandshake(pair.get(), reason);
+        return true;
+    }
+
+    /**
+     * Peer side of shared-login recovery: cancel a non-initialize task if needed,
+     * queue Initialize immediately, and clear pause so the handshake can run.
+     */
+    public void joinSharedLoginHandshake(String reason) {
+        Optional<SharedLoginPair> pair = SharedLoginRecovery.resolvePair(profile);
+        if (pair.isEmpty()) {
+            emitWarn("Shared login handshake join ignored; profile is not in a valid pair");
+            return;
+        }
+        // Reconnect recovery markPending()s before kicking. A ready pair must ignore
+        // startup peer kicks so Initialize-before-tasks cannot re-open the handshake.
+        if (SharedLoginPairGate.isReady(pair.get())) {
+            emitInfo("Ignoring shared login join (" + reason + "); pair already ready");
+            return;
+        }
+        SharedLoginPairGate.markPending(pair.get());
+        SharedLoginRecovery.begin(pair.get());
+        emitInfo("Joining shared login handshake (" + reason + "); farming blocked until ready");
+        forceInitialInitialize = true;
+        runNow(TpDailyTaskEnum.INITIALIZE, false);
+        ExecutionContext context = runningContext;
+        if (context != null && context.getTask().getTpTask() != TpDailyTaskEnum.INITIALIZE) {
+            emitInfo("Cancelling " + context.getTask().getTaskName() + " for shared login handshake");
+            context.cancel();
+        }
+        resume();
+    }
+
+    private void requestPeerSharedLoginHandshake(SharedLoginPair pair, String reason) {
+        Long peerId = pair.peerOf(profile.getId()).getId();
+        TaskDispatcher dispatcher = ScheduleService.obtain().getCoordinator();
+        if (dispatcher == null) {
+            emitWarn("Shared login peer queue unavailable; coordinator is null");
+            return;
+        }
+        TaskQueue peerQueue = dispatcher.getQueue(peerId);
+        if (peerQueue == null) {
+            emitWarn("Shared login peer queue not found for profile id=" + peerId);
+            return;
+        }
+        peerQueue.joinSharedLoginHandshake("peer " + reason + " on " + profile.getName());
     }
 
     private void attemptReconnect() {

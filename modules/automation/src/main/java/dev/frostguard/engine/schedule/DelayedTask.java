@@ -178,12 +178,12 @@ public abstract class DelayedTask implements Runnable, Delayed, StaminaWaitSched
             if (switchedProfileOnEmulator) {
                 // Changed by pernerch | Date: 2026-07-02 | Why: refresh stamina immediately on
                 // profile handover so downstream task logic always starts from current account data.
-                logInfo("Profile switch detected on emulator " + EMULATOR_NUMBER + ". Refreshing stamina from profile screen.");
-                staminaHelper.updateStaminaFromProfile();
+                logInfo("Profile switch detected on emulator " + EMULATOR_NUMBER + ". Refreshing stamina from the city/world badge.");
+                refreshStaminaFromHud();
             }
 
             if (consumesStamina() && StaminaService.getServices().requiresUpdate(profile.getId())) {
-                staminaHelper.updateStaminaFromProfile();
+                refreshStaminaFromHud();
             }
 
             execute();
@@ -285,6 +285,11 @@ public abstract class DelayedTask implements Runnable, Delayed, StaminaWaitSched
         if (!emuManager.isPackageRunning(EMULATOR_NUMBER, EmulatorController.GAME.getPackageName())) {
             throw new HomeNotFoundException("Game process is not active");
         }
+    }
+
+    /** Reads the badge under the avatar. The account stays on City or World. */
+    private void refreshStaminaFromHud() {
+        staminaHelper.updateStaminaFromHud();
     }
 
     // ── OCR convenience ─────────────────────────────────────────────

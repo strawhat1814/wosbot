@@ -202,6 +202,8 @@ public enum ConfigurationKeyEnum {
     TUNDRA_TRUCK_USE_GEMS_BOOL                  ("false",   Boolean.class,       ConfigCategory.EVENTS),
     TUNDRA_TREK_AUTOMATION_BOOL                 ("false",   Boolean.class,       ConfigCategory.EVENTS),
     TUNDRA_TREK_AUTOMATION_INTERVAL_DAYS_INT    ("1",       Integer.class,       ConfigCategory.EVENTS),
+    /** True while an Idle Trek finish should be claimed from City/World HUD only. */
+    TUNDRA_TREK_AWAITING_HUD_CLAIM_BOOL         ("false",   Boolean.class,       ConfigCategory.EVENTS),
     TUNDRA_TREK_SUPPLIES_BOOL                   ("false",   Boolean.class,       ConfigCategory.EVENTS),
 
     /* ─────────── intel ─────────── */

@@ -228,6 +228,7 @@ public class ProfileService implements ProfileServiceInterface {
 		target.setAvatarName(source.getCharacterName());
 		target.setGuildTag(source.getCharacterAllianceCode());
 		target.setRealm(source.getCharacterServer());
+		target.setSharedLoginPeerProfileId(source.getSharedLoginPeerProfileId());
 	}
 
 	@FunctionalInterface

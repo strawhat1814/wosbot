@@ -26,6 +26,8 @@ public class AccountDescriptor {
     private String heroName;
     private String guildTag;
     private String serverName;
+    /** Peer profile for shared-login dual-emulator handshake; null when unpaired. */
+    private Long sharedLoginPeerProfileId;
     private int queueSlot = Integer.MAX_VALUE;
     private List<ConfigData> entries = new ArrayList<>();
     private List<String> tags = new ArrayList<>();
@@ -48,11 +50,20 @@ public class AccountDescriptor {
     public AccountDescriptor(Long accountId, String displayName, String deviceSlot,
                              Boolean active, Long sortWeight, Long cooldownSeconds,
                              String heroId, String heroName, String guildTag, String serverName) {
+        this(accountId, displayName, deviceSlot, active, sortWeight, cooldownSeconds,
+                heroId, heroName, guildTag, serverName, null);
+    }
+
+    public AccountDescriptor(Long accountId, String displayName, String deviceSlot,
+                             Boolean active, Long sortWeight, Long cooldownSeconds,
+                             String heroId, String heroName, String guildTag, String serverName,
+                             Long sharedLoginPeerProfileId) {
         this(accountId, displayName, deviceSlot, active, sortWeight, cooldownSeconds);
         this.heroId = heroId;
         this.heroName = heroName;
         this.guildTag = guildTag;
         this.serverName = serverName;
+        this.sharedLoginPeerProfileId = sharedLoginPeerProfileId;
     }
 
     // ---- Profile identity ----
@@ -93,6 +104,11 @@ public class AccountDescriptor {
 
     public String getServerName() { return serverName; }
     public void setServerName(String serverName) { this.serverName = serverName; }
+
+    public Long getSharedLoginPeerProfileId() { return sharedLoginPeerProfileId; }
+    public void setSharedLoginPeerProfileId(Long sharedLoginPeerProfileId) {
+        this.sharedLoginPeerProfileId = sharedLoginPeerProfileId;
+    }
 
     // ---- Queue position ----
 

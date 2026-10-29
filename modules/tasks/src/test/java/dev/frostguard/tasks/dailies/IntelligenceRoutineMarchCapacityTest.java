@@ -52,4 +52,16 @@ class IntelligenceRoutineMarchCapacityTest {
         assertEquals(0, IntelligenceRoutine.resolveIntelMarchCapacity(6, 0, true));
         assertEquals(0, IntelligenceRoutine.resolveIntelMarchCapacity(6, 0, false));
     }
+
+    @Test
+    void recallGatherTroopsOffLeavesMarchesInPlace() {
+        assertFalse(IntelligenceRoutine.recallsAllGatherTroops(false, false));
+        assertFalse(IntelligenceRoutine.recallsAllGatherTroops(true, false));
+    }
+
+    @Test
+    void recallGatherTroopsOnRecallsEveryGatherMarch() {
+        assertTrue(IntelligenceRoutine.recallsAllGatherTroops(false, true));
+        assertTrue(IntelligenceRoutine.recallsAllGatherTroops(true, true));
+    }
 }

@@ -1,28 +1,50 @@
 package dev.frostguard.tasks.heroes;
 
-import dev.frostguard.engine.schedule.LaunchPoint;
-
-
-import dev.frostguard.engine.config.PriorityConfigResolver;
-import dev.frostguard.vision.convert.GameTimeUtils;
-import dev.frostguard.vision.convert.GameTimeUtils;
 import dev.frostguard.api.configs.ConfigurationKeyEnum;
-import dev.frostguard.api.configs.TemplatesEnum;
 import dev.frostguard.api.configs.ExpertSkillItemEnum;
+import dev.frostguard.api.configs.TemplatesEnum;
 import dev.frostguard.api.configs.TpDailyTaskEnum;
-import dev.frostguard.api.domain.*;
-import dev.frostguard.engine.schedule.DelayedTask;
+import dev.frostguard.api.domain.AccountDescriptor;
+import dev.frostguard.api.domain.AreaData;
+import dev.frostguard.api.domain.ImageSearchResultData;
+import dev.frostguard.api.domain.PointData;
+import dev.frostguard.api.domain.PriorityItemData;
+import dev.frostguard.engine.config.PriorityConfigResolver;
 import dev.frostguard.engine.helper.TemplateSearchHelper.SearchConfig;
+import dev.frostguard.engine.schedule.DelayedTask;
+import dev.frostguard.tasks.diagnostics.TaskDiagnosticSnapshots;
+import dev.frostguard.vision.convert.GameTimeUtils;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Optional;
 
 /**
  * Task for training expert skills based on priority configuration
  * Handles training for Cyrille, Agnes, Holger, and Romulus skills
  */
 public class ExpertSkillTrainingRoutine extends DelayedTask {
+
+    private static final int LEFT_MENU_SCROLL_ATTEMPTS = 5;
+    private static final int EXPERT_CAROUSEL_SCAN_LIMIT = 10;
+    private static final int BADGE_MATCH_THRESHOLD = 90;
+    private static final Duration NO_EXPERTS_RETRY = Duration.ofMinutes(10);
+
+    /** Overview portrait used to open the expert detail carousel when no badge is visible yet. */
+    private static final AreaData CYRILLE_OVERVIEW_PORTRAIT =
+            new AreaData(new PointData(151, 414), new PointData(227, 465));
+
+    private static final TemplatesEnum[] EXPERT_BADGES = {
+            TemplatesEnum.EXPERT_TRAINING_CYRILLE_BADGE,
+            TemplatesEnum.EXPERT_TRAINING_AGNES_BADGE,
+            TemplatesEnum.EXPERT_TRAINING_HOLGER_BADGE,
+            TemplatesEnum.EXPERT_TRAINING_ROMULUS_BADGE,
+            TemplatesEnum.EXPERT_TRAINING_BALDUR_BADGE,
+            TemplatesEnum.EXPERT_TRAINING_FABIAN_BADGE
+    };
 
     public ExpertSkillTrainingRoutine(AccountDescriptor profile, TpDailyTaskEnum tpTask) {
         super(profile, tpTask);
@@ -31,7 +53,6 @@ public class ExpertSkillTrainingRoutine extends DelayedTask {
     @Override
     protected void execute() {
 
-        // Get priority list configuration
         List<PriorityItemData> enabledPriorities = PriorityConfigResolver.activeRankings(
                 profile,
                 ConfigurationKeyEnum.EXPERT_SKILL_TRAINING_PRIORITIES_STRING);
@@ -42,12 +63,10 @@ public class ExpertSkillTrainingRoutine extends DelayedTask {
             return;
         }
 
-        // Navigate to experts screen
         marchHelper.openLeftMenuCitySection(true);
 
-        int maxScrollAttempts = 5;
         ImageSearchResultData trainingExpertButton = null;
-        for (int attempt = 1; attempt <= maxScrollAttempts; attempt++) {
+        for (int attempt = 1; attempt <= LEFT_MENU_SCROLL_ATTEMPTS; attempt++) {
             swipe(new PointData(255, 477), new PointData(255, 400));
             sleepTask(500);
             trainingExpertButton = templateSearchHelper.locatePattern(
@@ -56,11 +75,10 @@ public class ExpertSkillTrainingRoutine extends DelayedTask {
             if (trainingExpertButton.isFound()) {
                 break;
             }
-
         }
-        if (!trainingExpertButton.isFound()) {
+        if (trainingExpertButton == null || !trainingExpertButton.isFound()) {
             logInfo("No training expert found, ending task.");
-            reschedule(LocalDateTime.now().plusMinutes(10));
+            reschedule(LocalDateTime.now().plus(NO_EXPERTS_RETRY));
             return;
         }
         tapInside(trainingExpertButton);
@@ -70,8 +88,7 @@ public class ExpertSkillTrainingRoutine extends DelayedTask {
                 TemplatesEnum.EXPERT_TRAINING_SPEEDUP_ICON,
                 SearchConfig.builder().build());
         if (speedUpButton.isFound()) {
-            // if im here means that there's a skill being trained, get training time and
-            // reschedule
+            // Skill already training: read remaining time and wait for completion.
             tapInside(speedUpButton.getPoint(), speedUpButton.getPoint(), 1, 500);
             Duration trainingTime = durationHelper.attemptRecognition(
                     new PointData(292, 284),
@@ -89,72 +106,31 @@ public class ExpertSkillTrainingRoutine extends DelayedTask {
             reschedule(LocalDateTime.now().plus(trainingTime));
             return;
         }
-        // scroll down to normalize position
-        for (int i = 0; i < 2; i++) {
-            emuManager.swipeScreen(EMULATOR_NUMBER, new PointData(358, 1000), new PointData(258, 100));
-        }
 
-        // enter on cyrille
-        tapInside(new PointData(151, 414), new PointData(227, 465), 3, 1000);
-
-        // map the available experts to not over loop on experts that we don't have
-        HashMap<EXPERTS, Boolean> expertAvailabilityMap = new HashMap<>();
-        List<EXPERTS> expertsOrderList = new ArrayList<>(); // To keep track of the order of detected experts
-        // search all expert badges to know which experts we have, we must search 1 by 1
-        // then cling on change expert button (right arrow)
-
-        TemplatesEnum[] expertBadges = {
-                TemplatesEnum.EXPERT_TRAINING_CYRILLE_BADGE,
-                TemplatesEnum.EXPERT_TRAINING_AGNES_BADGE,
-                TemplatesEnum.EXPERT_TRAINING_HOLGER_BADGE,
-                TemplatesEnum.EXPERT_TRAINING_ROMULUS_BADGE,
-                TemplatesEnum.EXPERT_TRAINING_BALDUR_BADGE,
-                TemplatesEnum.EXPERT_TRAINING_FABIAN_BADGE
-        };
-
-        for (int i = 0; i < 10; i++) {
-            Optional<BadgeSearchResult> foundResult = Arrays.stream(expertBadges)
-                    .parallel()
-                    .map(expertBadge -> {
-                        ImageSearchResultData badge = templateSearchHelper.locatePattern(
-                                expertBadge,
-                                SearchConfig.builder()
-                                        .withThreshold(90)
-                                        .withMaxAttempts(2)
-                                        .build());
-                        EXPERTS expert = getExpertFromTemplate(expertBadge);
-                        return new BadgeSearchResult(badge, expert, expertBadge);
-                    })
-                    .filter(result -> result.badge.isFound())
-                    .findAny();
-
-            if (foundResult.isPresent()) {
-                BadgeSearchResult result = foundResult.get();
-                boolean alreadyAvailable = expertAvailabilityMap.getOrDefault(result.expert, false);
-
-                if (alreadyAvailable) {
-                    break;
-                }
-                expertsOrderList.add(result.expert);
-                expertAvailabilityMap.put(result.expert, true);
-            } else {
-                Arrays.stream(expertBadges)
-                        .map(this::getExpertFromTemplate)
-                        .forEach(expert -> expertAvailabilityMap.putIfAbsent(expert, false));
-            }
-            tapNear(new PointData(671, 650)); // right arrow to change expert
-            sleepTask(300);
-        }
-
-        long availableCount = expertAvailabilityMap.values().stream().filter(Boolean::booleanValue).count();
-        if (availableCount == 0) {
-            logInfo("No experts found, scheduling to check again in 10 minutes.");
-            reschedule(LocalDateTime.now().plusMinutes(10));
+        if (!enterExpertDetailCarousel()) {
+            logInfo("No experts found after opening training UI; "
+                    + TaskDiagnosticSnapshots.capture(
+                            emuManager, EMULATOR_NUMBER, "expertskilltraining", "no-experts")
+                    + ". Scheduling to check again in 10 minutes.");
+            reschedule(LocalDateTime.now().plus(NO_EXPERTS_RETRY));
             return;
         }
 
-        // print expert availability map
-        for (TemplatesEnum expertBadge : expertBadges) {
+        HashMap<EXPERTS, Boolean> expertAvailabilityMap = new HashMap<>();
+        List<EXPERTS> expertsOrderList = new ArrayList<>();
+        discoverAvailableExperts(expertAvailabilityMap, expertsOrderList);
+
+        long availableCount = expertAvailabilityMap.values().stream().filter(Boolean::booleanValue).count();
+        if (availableCount == 0) {
+            logInfo("No experts found during carousel scan; "
+                    + TaskDiagnosticSnapshots.capture(
+                            emuManager, EMULATOR_NUMBER, "expertskilltraining", "no-experts-carousel")
+                    + ". Scheduling to check again in 10 minutes.");
+            reschedule(LocalDateTime.now().plus(NO_EXPERTS_RETRY));
+            return;
+        }
+
+        for (TemplatesEnum expertBadge : EXPERT_BADGES) {
             EXPERTS expert = getExpertFromTemplate(expertBadge);
             if (expertAvailabilityMap.getOrDefault(expert, false)) {
                 logInfo(expert + " is available.");
@@ -166,12 +142,15 @@ public class ExpertSkillTrainingRoutine extends DelayedTask {
         // switch to skills tab
         tapInside(new PointData(500, 1232), new PointData(570, 1251), 1, 500);
 
-        // 3. Iterate through priorities and train skills
-        EXPERTS currentExpert = null; // Track the current expert to avoid unnecessary navigation
+        EXPERTS currentExpert = null;
 
         for (PriorityItemData priorityItem : enabledPriorities) {
-            // check if the expert related is available
-            ExpertSkillItemEnum skillItem = ExpertSkillItemEnum.valueOf(priorityItem.getIdentifier().toUpperCase());
+            ExpertSkillItemEnum skillItem = ExpertSkillItemEnum.fromKey(priorityItem.getIdentifier());
+            if (skillItem == null) {
+                logWarning("Skipping unknown expert skill priority identifier: "
+                        + priorityItem.getIdentifier());
+                continue;
+            }
             EXPERTS expert = getExpertFromEnum(skillItem);
 
             if (!expertAvailabilityMap.getOrDefault(expert, false)) {
@@ -180,11 +159,9 @@ public class ExpertSkillTrainingRoutine extends DelayedTask {
             }
             logInfo("Training skill: " + priorityItem.getName() + " for expert: " + expert);
 
-            // Only navigate to expert if it's different from the current one
             if (currentExpert == null || !currentExpert.equals(expert)) {
                 logInfo("Navigating to expert: " + expert);
 
-                // Detect current expert by checking which badge is visible
                 if (currentExpert == null) {
                     currentExpert = detectCurrentExpert();
                     if (currentExpert != null) {
@@ -195,7 +172,6 @@ public class ExpertSkillTrainingRoutine extends DelayedTask {
                     }
                 }
 
-                // Calculate how many taps are needed using the dynamically detected order
                 int tapsNeeded = calculateTapsToReach(currentExpert, expert, expertsOrderList);
 
                 if (tapsNeeded > 0) {
@@ -209,12 +185,11 @@ public class ExpertSkillTrainingRoutine extends DelayedTask {
                     logInfo("Already at expert: " + expert);
                 }
 
-                // Verify we're on the correct expert by checking the badge
                 TemplatesEnum expertBadgeTemplate = getExpertTemplate(skillItem);
                 ImageSearchResultData expertBadgeResult = templateSearchHelper.locatePattern(
                         expertBadgeTemplate,
                         SearchConfig.builder()
-                                .withThreshold(90)
+                                .withThreshold(BADGE_MATCH_THRESHOLD)
                                 .withMaxAttempts(2)
                                 .build());
 
@@ -224,7 +199,7 @@ public class ExpertSkillTrainingRoutine extends DelayedTask {
                     continue;
                 }
 
-                currentExpert = expert; // Update the current expert
+                currentExpert = expert;
             } else {
                 logInfo("Already on expert " + expert + " page, skipping navigation.");
             }
@@ -232,11 +207,10 @@ public class ExpertSkillTrainingRoutine extends DelayedTask {
             AreaData skillArea = getSkillArea(skillItem);
             tapInside(skillArea.topLeft(), skillArea.bottomRight(), 1, 300);
 
-            // check if skill is maxed or locked
             ImageSearchResultData learnResult = templateSearchHelper.locatePattern(
                     TemplatesEnum.EXPERT_TRAINING_LEARN_BUTTON,
                     SearchConfig.builder()
-                            .withThreshold(90)
+                            .withThreshold(BADGE_MATCH_THRESHOLD)
                             .withMaxAttempts(3)
                             .build());
 
@@ -248,12 +222,10 @@ public class ExpertSkillTrainingRoutine extends DelayedTask {
             tapInside(learnResult);
             sleepTask(500);
 
-            // check if the skill have pending points to learn, lets search the learn button
-            // again
             learnResult = templateSearchHelper.locatePattern(
                     TemplatesEnum.EXPERT_TRAINING_LEARN_BUTTON,
                     SearchConfig.builder()
-                            .withThreshold(90)
+                            .withThreshold(BADGE_MATCH_THRESHOLD)
                             .withMaxAttempts(3)
                             .build());
             if (learnResult.isFound()) {
@@ -262,8 +234,7 @@ public class ExpertSkillTrainingRoutine extends DelayedTask {
                 continue;
             }
 
-            // we must try with the times in decreasing order to not waste time 23h -> 10h
-            // -> 2h -> 10m (if 10 also fails, use it as last resort)
+            // Prefer longer durations first so short idle windows are not wasted.
             List<LearningTime> timesDescending = List.of(
                     LearningTime.TIME_23_00_00,
                     LearningTime.TIME_10_00_00,
@@ -274,19 +245,18 @@ public class ExpertSkillTrainingRoutine extends DelayedTask {
                 AreaData timeCheckboxArea = getLearningTimeCheckbox(learningTime);
                 tapInside(timeCheckboxArea.topLeft(), timeCheckboxArea.bottomRight(), 1, 300);
                 tapInside(new PointData(474, 888), new PointData(579, 910), 1, 400);
-                // check if the pop-up disappeared, that mean it was successful
 
                 ImageSearchResultData badgeResult = templateSearchHelper.locatePattern(
                         getExpertTemplate(skillItem),
                         SearchConfig.builder()
-                                .withThreshold(90)
+                                .withThreshold(BADGE_MATCH_THRESHOLD)
                                 .withMaxAttempts(3)
                                 .build());
 
                 if (badgeResult.isFound()) {
                     logInfo("Successfully started training for skill: " + priorityItem.getName() + " with duration: "
                             + learningTime.label());
-                    this.reschedule(LocalDateTime.now().plus(learningTime.duration())); // add 1 minute buffer
+                    this.reschedule(LocalDateTime.now().plus(learningTime.duration()));
                     pressBack();
                     pressBack();
                     return;
@@ -301,6 +271,70 @@ public class ExpertSkillTrainingRoutine extends DelayedTask {
                 }
             }
         }
+    }
+
+    /**
+     * Ensures the expert detail carousel is open so badge templates can match.
+     * Shared TemplateSearchHelper state is not safe for parallel badge scans.
+     */
+    private boolean enterExpertDetailCarousel() {
+        if (findAnyExpertBadge().isPresent()) {
+            logInfo("Expert detail already open; badge visible without overview entry tap.");
+            return true;
+        }
+
+        // Normalize overview scroll, then open Cyrille's detail page.
+        for (int i = 0; i < 2; i++) {
+            emuManager.swipeScreen(EMULATOR_NUMBER, new PointData(358, 1000), new PointData(258, 100));
+        }
+        tapInside(CYRILLE_OVERVIEW_PORTRAIT.topLeft(), CYRILLE_OVERVIEW_PORTRAIT.bottomRight(), 3, 1000);
+
+        if (findAnyExpertBadge().isPresent()) {
+            return true;
+        }
+
+        logInfo("Cyrille overview entry did not reveal an expert badge.");
+        return false;
+    }
+
+    private void discoverAvailableExperts(
+            HashMap<EXPERTS, Boolean> expertAvailabilityMap,
+            List<EXPERTS> expertsOrderList) {
+        for (int i = 0; i < EXPERT_CAROUSEL_SCAN_LIMIT; i++) {
+            Optional<BadgeSearchResult> foundResult = findAnyExpertBadge();
+
+            if (foundResult.isPresent()) {
+                BadgeSearchResult result = foundResult.get();
+                boolean alreadyAvailable = expertAvailabilityMap.getOrDefault(result.expert(), false);
+
+                if (alreadyAvailable) {
+                    break;
+                }
+                expertsOrderList.add(result.expert());
+                expertAvailabilityMap.put(result.expert(), true);
+            } else {
+                for (TemplatesEnum expertBadge : EXPERT_BADGES) {
+                    expertAvailabilityMap.putIfAbsent(getExpertFromTemplate(expertBadge), false);
+                }
+            }
+            tapNear(new PointData(671, 650)); // right arrow to change expert
+            sleepTask(300);
+        }
+    }
+
+    private Optional<BadgeSearchResult> findAnyExpertBadge() {
+        for (TemplatesEnum expertBadge : EXPERT_BADGES) {
+            ImageSearchResultData badge = templateSearchHelper.locatePattern(
+                    expertBadge,
+                    SearchConfig.builder()
+                            .withThreshold(BADGE_MATCH_THRESHOLD)
+                            .withMaxAttempts(2)
+                            .build());
+            if (badge.isFound()) {
+                return Optional.of(new BadgeSearchResult(badge, getExpertFromTemplate(expertBadge), expertBadge));
+            }
+        }
+        return Optional.empty();
     }
 
     private EXPERTS getExpertFromEnum(ExpertSkillItemEnum expertSkillItem) {
@@ -363,28 +397,7 @@ public class ExpertSkillTrainingRoutine extends DelayedTask {
      * Detect which expert is currently visible by searching for their badge
      */
     private EXPERTS detectCurrentExpert() {
-        TemplatesEnum[] expertBadges = {
-                TemplatesEnum.EXPERT_TRAINING_CYRILLE_BADGE,
-                TemplatesEnum.EXPERT_TRAINING_AGNES_BADGE,
-                TemplatesEnum.EXPERT_TRAINING_ROMULUS_BADGE,
-                TemplatesEnum.EXPERT_TRAINING_HOLGER_BADGE,
-                TemplatesEnum.EXPERT_TRAINING_BALDUR_BADGE,
-                TemplatesEnum.EXPERT_TRAINING_FABIAN_BADGE
-        };
-
-        for (TemplatesEnum badge : expertBadges) {
-            ImageSearchResultData result = templateSearchHelper.locatePattern(
-                    badge,
-                    SearchConfig.builder()
-                            .withThreshold(90)
-                            .withMaxAttempts(1)
-                            .build());
-            if (result.isFound()) {
-                return getExpertFromTemplate(badge);
-            }
-        }
-
-        return null; // Could not detect current expert
+        return findAnyExpertBadge().map(BadgeSearchResult::expert).orElse(null);
     }
 
     /**
@@ -408,14 +421,12 @@ public class ExpertSkillTrainingRoutine extends DelayedTask {
             return -1;
         }
 
-        // Calculate distance in the circular list
         int size = availableExperts.size();
         int distance;
 
         if (targetIndex > currentIndex) {
             distance = targetIndex - currentIndex;
         } else {
-            // Wrap around
             distance = (size - currentIndex) + targetIndex;
         }
 

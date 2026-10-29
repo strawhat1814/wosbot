@@ -78,7 +78,17 @@ class SidebarNavigatorFrameTest {
     void derivesTheGoControlFromTheDetectedRowInsteadOfMatchingAnAmbiguousArrow() {
         ImageSearchResultData icon = ImageSearchResultData.hit(46, 373, 99.0, 44, 44);
 
-        assertEquals(AreaData.of(361, 343, 440, 403), SidebarNavigator.rowActionAreaFor(icon));
+        assertEquals(AreaData.of(361, 333, 440, 413), SidebarNavigator.rowActionAreaFor(icon));
+    }
+
+    @Test
+    void treatsMyRewardsRowsAsClaimOnlyForActionFallback() {
+        assertTrue(SidebarNavigator.isClaimOnly(SidebarDestination.WARM_WELCOME));
+        assertTrue(SidebarNavigator.isClaimOnly(SidebarDestination.ONLINE_REWARDS));
+        assertFalse(SidebarNavigator.isClaimOnly(SidebarDestination.ARENA));
+        assertFalse(SidebarNavigator.isClaimOnly(SidebarDestination.LAND_OF_HEROES));
+        assertTrue(SidebarNavigator.hasGoAction(SidebarDestination.TUNDRA_TREK_SUPPLIES));
+        assertFalse(SidebarNavigator.hasGoAction(SidebarDestination.WARM_WELCOME));
     }
 
     @Test

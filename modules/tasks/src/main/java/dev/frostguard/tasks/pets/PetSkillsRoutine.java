@@ -101,6 +101,11 @@ public class PetSkillsRoutine extends DelayedTask {
 
     // ========== Retry Constants ==========
     private static final int FALLBACK_RESCHEDULE_MINUTES = 5;
+    /**
+     * Pet skill cooldowns are multi-hour. Sub-minute OCR hits are icon/noise
+     * misreads that otherwise reschedule the whole task every few seconds.
+     */
+    private static final Duration MIN_PLAUSIBLE_COOLDOWN = Duration.ofMinutes(1);
     private static final int SKILL_LEVEL_OCR_MAX_RETRIES = 3;
     private static final int OCR_RETRY_DELAY_MS = 200;
     private static final int GATHERING_ACTIVE_RECHECK_MINUTES = 1;
@@ -401,7 +406,7 @@ public class PetSkillsRoutine extends DelayedTask {
             logDebug(skill.name() + " skill is on cooldown.");
         }
 
-        readAndTrackCooldown(skill);
+        readAndTrackCooldown(skill, skillUsed);
     }
 
     private void processGatheringSkill() {
@@ -426,7 +431,7 @@ public class PetSkillsRoutine extends DelayedTask {
 
         clearGatheringDeploymentMarker();
         logDebug("GATHERING skill is on cooldown.");
-        readAndTrackCooldown(PetSkill.GATHERING);
+        readAndTrackCooldown(PetSkill.GATHERING, false);
     }
 
     private void handleGatheringDeployment(GatheringDeployResult result) {
@@ -593,45 +598,47 @@ public class PetSkillsRoutine extends DelayedTask {
 
     /**
      * Reads the cooldown timer for a skill and tracks the earliest cooldown.
-     * 
+     *
      * <p>
      * Uses OCR to read the cooldown display and convert to Duration.
      * Updates the earliestCooldown field if this cooldown is sooner.
-     * 
+     *
      * <p>
-     * If OCR fails, logs a warning and continues without updating cooldown.
-     * 
+     * Implausibly short OCR (under {@link #MIN_PLAUSIBLE_COOLDOWN}) is rejected.
+     * After a successful use, a failed or rejected read uses the 5-minute
+     * fallback. While the skill is already on cooldown, a bad read is skipped
+     * so another skill's validated timer can own the schedule.
+     *
      * @param skill the skill whose cooldown to read
+     * @param skillJustUsed whether this visit successfully pressed Use
      */
-    private void readAndTrackCooldown(PetSkill skill) {
-        Duration cooldownDuration;
+    private void readAndTrackCooldown(PetSkill skill, boolean skillJustUsed) {
+        Duration parsedCooldown = switch (skill) {
+            case STAMINA -> readSkillCooldown(STAMINA_COOLDOWN_OCR_AREA);
+            case FOOD -> readSkillCooldown(FOOD_COOLDOWN_OCR_AREA);
+            case TREASURE -> readSkillCooldown(
+                    TREASURE_COOLDOWN_OCR_AREA,
+                    CommonOCRSettings.RED_MULTILINE_DURATION_SETTINGS);
+            case GATHERING -> readSkillCooldown(
+                    GATHERING_COOLDOWN_OCR_AREA,
+                    CommonOCRSettings.RED_MULTILINE_DURATION_SETTINGS);
+        };
 
-        switch (skill) {
-            case STAMINA:
-                cooldownDuration = readSkillCooldown(STAMINA_COOLDOWN_OCR_AREA);
-                break;
-
-            case FOOD:
-                cooldownDuration = readSkillCooldown(FOOD_COOLDOWN_OCR_AREA);
-                break;
-
-            case TREASURE:
-                cooldownDuration = readSkillCooldown(TREASURE_COOLDOWN_OCR_AREA);
-                break;
-
-            case GATHERING:
-                cooldownDuration = readSkillCooldown(
-                        GATHERING_COOLDOWN_OCR_AREA,
-                        CommonOCRSettings.RED_MULTILINE_DURATION_SETTINGS);
-                break;
-
-            default:
-                cooldownDuration = null;
+        Duration cooldownDuration = resolveTrackedCooldown(parsedCooldown, skillJustUsed);
+        if (cooldownDuration == null) {
+            if (parsedCooldown != null) {
+                logWarning("Rejected implausible " + skill.name() + " cooldown ("
+                        + parsedCooldown.toSeconds() + "s). Not using it for reschedule.");
+            } else {
+                logWarning("Failed to read cooldown for " + skill.name()
+                        + ". Not using it for reschedule.");
+            }
+            return;
         }
 
-        if (cooldownDuration == null) {
-            logWarning("Failed to read cooldown for " + skill.name() + ". Using 5 minute fallback cooldown.");
-            cooldownDuration = Duration.ofMinutes(5);
+        if (parsedCooldown == null || parsedCooldown.compareTo(MIN_PLAUSIBLE_COOLDOWN) < 0) {
+            logWarning("Failed to read a plausible cooldown for " + skill.name()
+                    + ". Using " + FALLBACK_RESCHEDULE_MINUTES + " minute fallback cooldown.");
         }
 
         LocalDateTime cooldownEnd = LocalDateTime.now().plus(cooldownDuration);
@@ -642,6 +649,21 @@ public class PetSkillsRoutine extends DelayedTask {
                 GameTimeUtils.formatCountdown(cooldownEnd)));
 
         updateEarliestCooldown(cooldownEnd);
+    }
+
+    /**
+     * Chooses a schedule duration from an OCR read.
+     *
+     * @return a validated duration, the post-use fallback, or null to skip tracking
+     */
+    static Duration resolveTrackedCooldown(Duration parsedCooldown, boolean skillJustUsed) {
+        if (parsedCooldown != null && parsedCooldown.compareTo(MIN_PLAUSIBLE_COOLDOWN) >= 0) {
+            return parsedCooldown;
+        }
+        if (skillJustUsed) {
+            return Duration.ofMinutes(FALLBACK_RESCHEDULE_MINUTES);
+        }
+        return null;
     }
 
     /**

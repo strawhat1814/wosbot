@@ -6,6 +6,7 @@ import dev.frostguard.data.repository.DailyTaskRepository;
 import dev.frostguard.api.configs.ConfigurationKeyEnum;
 import dev.frostguard.api.configs.TemplatesEnum;
 import dev.frostguard.api.configs.TpDailyTaskEnum;
+import dev.frostguard.api.domain.AreaData;
 import dev.frostguard.api.domain.ImageSearchResultData;
 import dev.frostguard.api.domain.PointData;
 import dev.frostguard.api.domain.AccountDescriptor;
@@ -14,20 +15,40 @@ import dev.frostguard.engine.service.TaskManagementService;
 import dev.frostguard.engine.service.StaminaService;
 import dev.frostguard.engine.schedule.DelayedTask;
 import dev.frostguard.engine.schedule.LaunchPoint;
+import dev.frostguard.engine.nav.CommonGameAreas;
 import dev.frostguard.engine.nav.SearchConfigConstants;
 import dev.frostguard.engine.helper.NavigationHelper.EventMenu;
 import dev.frostguard.engine.helper.NavigationHelper.EventMenuOpenResult;
 import dev.frostguard.engine.helper.DeploymentHelper;
+import dev.frostguard.engine.helper.TemplateSearchHelper.SearchConfig;
 import dev.frostguard.engine.diagnostics.MissingTemplateSnapshotSettings;
 import dev.frostguard.tasks.diagnostics.TaskControlSignals;
 import dev.frostguard.tasks.diagnostics.TaskDiagnosticSnapshots;
 import java.awt.Color;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 
 public class MercenaryEventRoutine extends DelayedTask {
+    /** World HUD summon icons differ by difficulty; grow this list as each crop is added. */
+    private static final TemplatesEnum[] WORLD_SUMMON_TEMPLATES = {
+            TemplatesEnum.MERCENARY_WORLD_SUMMON,
+            TemplatesEnum.MERCENARY_WORLD_SUMMON_2,
+            TemplatesEnum.MERCENARY_WORLD_SUMMON_3
+    };
+
+    private static final AreaData WORLD_SUMMON_SEARCH_AREA = AreaData.of(520, 180, 720, 980);
+    private static final SearchConfig WORLD_SUMMON_SEARCH = SearchConfig.builder()
+            .withMaxAttempts(3)
+            .withDelay(200L)
+            .withThreshold(75)
+            .withArea(WORLD_SUMMON_SEARCH_AREA)
+            .build();
+    private static final Duration HELP_RETRY_DELAY = Duration.ofMinutes(15);
+    private static final Duration HELP_MISSING_RETRY = Duration.ofMinutes(5);
+
     private final DailyTaskRepository iDailyTaskRepository = DailyTaskRepository.getRepository();
     private final TaskManagementService taskManagementService = TaskManagementService.shared();
     private Integer lastMercenaryLevel = null;
@@ -67,6 +88,10 @@ public class MercenaryEventRoutine extends DelayedTask {
         if (!staminaHelper.checkStaminaAndMarchesOrReschedule(minStaminaLevel, refreshStaminaLevel, this))
             return;
 
+        if (tryWorldSummonAndHandle()) {
+            return;
+        }
+
         boolean tabWasAbsent = false;
         int attempt = 0;
         while (attempt < 2) {
@@ -88,6 +113,113 @@ public class MercenaryEventRoutine extends DelayedTask {
         respondToMenu(tabWasAbsent ? EventMenuOpenResult.TAB_ABSENT : EventMenuOpenResult.PANEL_CLOSED);
     }
 
+    /**
+     * Prefer World HUD summon over Events. The HUD icon opens the merc card with
+     * Scout/Challenge; that control must be tapped before the World Attack/Help popup.
+     * Returns true when the visit was fully handled (or a retry was scheduled).
+     * Returns false so Events can run when the shortcut was absent or the card never opened.
+     */
+    private boolean tryWorldSummonAndHandle() {
+        TemplatesEnum matched = null;
+        for (TemplatesEnum summonTemplate : WORLD_SUMMON_TEMPLATES) {
+            ImageSearchResultData hit = templateSearchHelper.locatePattern(summonTemplate, WORLD_SUMMON_SEARCH);
+            if (hit.isFound()) {
+                logInfo("World mercenary summon shortcut found (" + summonTemplate.name()
+                        + ", score=" + String.format(java.util.Locale.ROOT, "%.1f", hit.getMatchScore())
+                        + "). Tapping to open the merc card.");
+                tapInside(hit);
+                sleepTask(2500);
+                matched = summonTemplate;
+                break;
+            }
+        }
+        if (matched == null) {
+            logInfo("No World mercenary summon shortcut matched; using Events menu.");
+            return false;
+        }
+
+        if (!scoutOrChallengeFromSummonCard() && !mercActionPopupOpen()) {
+            sleepTask(1500);
+            if (!scoutOrChallengeFromSummonCard() && !mercActionPopupOpen()) {
+                String snapshot = TaskDiagnosticSnapshots.capture(
+                        emuManager, EMULATOR_NUMBER, "mercenaryevent", "world-summon-no-scout");
+                logWarning("World summon (" + matched.name()
+                        + ") opened neither Scout/Challenge nor Attack/Help. Falling back to Events. "
+                        + snapshot);
+                pressBack();
+                sleepTask(500);
+                return false;
+            }
+        }
+
+        try {
+            respondToOpenedScreen(true);
+            boolean sameLevelAsLastTime = noteLevelChange(checkMercenaryLevelPreAttack());
+            if (requestHelpWhenMilestone(lastMercenaryLevel)) {
+                return true;
+            }
+            if (restIfFinalLevelSettled(lastMercenaryLevel)) {
+                return true;
+            }
+            attackFromWorldPopup(sameLevelAsLastTime);
+            return true;
+        } catch (Exception e) {
+            TaskControlSignals.rethrowControlSignal(e);
+            LocalDateTime retryAt = LocalDateTime.now().plusMinutes(30);
+            String snapshot = TaskDiagnosticSnapshots.capture(
+                    emuManager, EMULATOR_NUMBER, "mercenaryevent", "task-error");
+            logError("Mercenary Event stopped on " + e.getClass().getSimpleName()
+                    + "; retrying at " + retryAt.format(DateTimeFormatter.ofPattern("dd-MM-yyyy HH:mm:ss"))
+                    + "; " + snapshot + ".", e);
+            reschedule(retryAt);
+            return true;
+        }
+    }
+
+    /**
+     * On the World-summon merc card, tap Scout (or Challenge) and wait for map travel.
+     * Returns true when that control was found and tapped.
+     */
+    private boolean scoutOrChallengeFromSummonCard() {
+        ImageSearchResultData scoutButton = templateSearchHelper.locatePattern(
+                TemplatesEnum.MERCENARY_SCOUT_BUTTON, SearchConfigConstants.SINGLE_WITH_RETRIES);
+        if (scoutButton.isFound()) {
+            scout = true;
+            logInfo("World summon card: Scout found. Tapping to travel to the merc.");
+            tapInside(scoutButton);
+            sleepTask(4000);
+            return true;
+        }
+
+        ImageSearchResultData challengeButton = templateSearchHelper.locatePattern(
+                TemplatesEnum.MERCENARY_CHALLENGE_BUTTON, SearchConfigConstants.SINGLE_WITH_RETRIES);
+        if (challengeButton.isFound()) {
+            scout = false;
+            logInfo("World summon card: Challenge found. Tapping to travel to the merc.");
+            tapInside(challengeButton);
+            sleepTask(4000);
+            return true;
+        }
+        return false;
+    }
+
+    /** True when Attack, Request Help, or Rally is visible on the World merc action popup. */
+    private boolean mercActionPopupOpen() {
+        ImageSearchResultData attack = templateSearchHelper.locatePattern(
+                TemplatesEnum.MERCENARY_ATTACK_BUTTON, SearchConfigConstants.DEFAULT_SINGLE);
+        if (attack.isFound()) {
+            return true;
+        }
+        ImageSearchResultData help = templateSearchHelper.locatePattern(
+                TemplatesEnum.MERCENARY_ASK_HELP_BUTTON, SearchConfigConstants.DEFAULT_SINGLE);
+        if (help.isFound()) {
+            return true;
+        }
+        ImageSearchResultData rally = templateSearchHelper.locatePattern(
+                TemplatesEnum.RALLY_BUTTON, SearchConfigConstants.DEFAULT_SINGLE);
+        return rally.isFound();
+    }
+
     private void handleMercenaryEvent() {
         try {
             // Select a mercenary event level if needed
@@ -95,35 +227,27 @@ public class MercenaryEventRoutine extends DelayedTask {
                 return; // If level selection failed, exit the task
             }
 
+            // Large-font level on the Events screen before Scout/Challenge.
+            Integer preScoutLevel = checkMercenaryLevelPreScout();
+            if (preScoutLevel != null) {
+                lastMercenaryLevel = preScoutLevel;
+            }
+
             // Check for scout or challenge buttons
             ImageSearchResultData eventButton = findMercenaryEventButton();
 
             if (eventButton == null) {
+                // Lv.25 with no Scout/Challenge means the hunt is finished (or waiting
+                // on alliance help with no travel control). Do not 5-minute spin.
+                if (restIfFinalLevelSettled(preScoutLevel != null ? preScoutLevel : lastMercenaryLevel)) {
+                    return;
+                }
                 respondToOpenedScreen(false);
                 return;
             }
             respondToOpenedScreen(true);
 
-            // Handle attack loss, if the attack was lost, skip flag selection to use
-            // strongest march
-            boolean sameLevelAsLastTime = false;
-            logInfo("Previous mercenary level: " + lastMercenaryLevel);
-            Integer currentLevel = checkMercenaryLevel();
-            if (currentLevel != null) {
-                sameLevelAsLastTime = (currentLevel.equals(lastMercenaryLevel));
-                lastMercenaryLevel = currentLevel;
-            }
-
-            if (sameLevelAsLastTime) {
-                attackAttempts++;
-                staminaHelper.addStamina(lastStaminaSpent);
-                logInfo("Mercenary level is the same as last time, indicating a possible attack loss. Skipping flag selection to use strongest march.");
-            } else {
-                attackAttempts = 0;
-                logInfo("Mercenary level has changed since last time. Using flag selection if enabled.");
-            }
-
-            scoutAndAttack(eventButton, sameLevelAsLastTime);
+            scoutAndAttack(eventButton);
         } catch (Exception e) {
             TaskControlSignals.rethrowControlSignal(e);
             LocalDateTime retryAt = LocalDateTime.now().plusMinutes(30);
@@ -136,23 +260,163 @@ public class MercenaryEventRoutine extends DelayedTask {
         }
     }
 
-    private Integer checkMercenaryLevel() {
-        OcrSettingsData configs = OcrSettingsData.assembler()
-                .textLayout(OcrSettingsData.TextLayout.SINGLE_LINE)
+    private boolean noteLevelChange(Integer preAttackLevel) {
+        boolean sameLevelAsLastTime = false;
+        logInfo("Previous mercenary level: " + lastMercenaryLevel);
+        Integer currentLevel = preAttackLevel != null ? preAttackLevel : checkMercenaryLevelPreAttack();
+        if (currentLevel != null) {
+            sameLevelAsLastTime = currentLevel.equals(lastMercenaryLevel);
+            lastMercenaryLevel = currentLevel;
+        }
 
-                .stripBackground(true)
-                .setTextColor(new Color(255, 255, 255)) // White text
-                .charWhitelist("0123456789") // Only allow digits and '/'
-                .build();
+        if (sameLevelAsLastTime) {
+            attackAttempts++;
+            staminaHelper.addStamina(lastStaminaSpent);
+            logInfo("Mercenary level is the same as last time, indicating a possible attack loss. Skipping flag selection to use strongest march.");
+        } else {
+            attackAttempts = 0;
+            logInfo("Mercenary level has changed since last time. Using flag selection if enabled.");
+        }
+        return sameLevelAsLastTime;
+    }
 
-        Integer level = readNumberValue(new PointData(322, 867), new PointData(454, 918), configs);
-        if (level == null) {
-            logWarning("No mercenary level found after OCR attempts.");
+    private Integer checkMercenaryLevelPreScout() {
+        return checkMercenaryLevel(CommonGameAreas.MERCENARY_LEVEL_PRE_SCOUT_OCR_AREA, "pre-scout");
+    }
+
+    private Integer checkMercenaryLevelPreAttack() {
+        return checkMercenaryLevel(CommonGameAreas.MERCENARY_LEVEL_PRE_ATTACK_OCR_AREA, "pre-attack");
+    }
+
+    private Integer checkMercenaryLevel(AreaData area, String band) {
+        Integer level = readMercenaryLevelDigits(area, band);
+        Integer sanitized = MercenaryHelpMilestones.sanitizeLevelRead(level, lastMercenaryLevel);
+        if (sanitized == null && level != null && !"pre-scout".equals(band)) {
+            // Truncated two-digit title (e.g. 25 → 2): retry a wider band once.
+            AreaData wider = AreaData.of(
+                    Math.max(0, area.topLeft().getX() - 40),
+                    Math.max(0, area.topLeft().getY() - 10),
+                    Math.min(720, area.bottomRight().getX() + 60),
+                    Math.min(1280, area.bottomRight().getY() + 15));
+            logWarning("Mercenary level OCR " + level + " looks truncated vs previous "
+                    + lastMercenaryLevel + "; retrying wider " + band + " band.");
+            level = readMercenaryLevelDigits(wider, band);
+            sanitized = MercenaryHelpMilestones.sanitizeLevelRead(level, lastMercenaryLevel);
+        }
+        if (sanitized == null) {
+            if (level != null) {
+                logWarning("Rejected mercenary level OCR " + level + " (" + band + ").");
+            } else {
+                logWarning("No mercenary level found after OCR attempts (" + band + ").");
+            }
             return null;
         }
 
-        logInfo("Current mercenary level: " + level);
+        logInfo("Current mercenary level: " + sanitized + " (" + band + ").");
+        return sanitized;
+    }
+
+    private Integer readMercenaryLevelDigits(AreaData area, String band) {
+        // Pre-scout badge is white on pink; World popup title is blue on white.
+        Color textColor = "pre-scout".equals(band)
+                ? new Color(255, 255, 255)
+                : new Color(40, 90, 180);
+        OcrSettingsData configs = OcrSettingsData.assembler()
+                .textLayout(OcrSettingsData.TextLayout.SINGLE_LINE)
+                .stripBackground(true)
+                .setTextColor(textColor)
+                .charWhitelist("0123456789")
+                .build();
+
+        Integer level = readNumberValue(area.topLeft(), area.bottomRight(), configs);
+        if (level == null && !"pre-scout".equals(band)) {
+            OcrSettingsData whiteFallback = OcrSettingsData.assembler()
+                    .textLayout(OcrSettingsData.TextLayout.SINGLE_LINE)
+                    .stripBackground(true)
+                    .setTextColor(new Color(255, 255, 255))
+                    .charWhitelist("0123456789")
+                    .build();
+            level = readNumberValue(area.topLeft(), area.bottomRight(), whiteFallback);
+        }
         return level;
+    }
+
+    /**
+     * @return true when the visit was fully handled (help tapped or short retry scheduled)
+     */
+    private boolean requestHelpWhenMilestone(Integer level) {
+        if (!MercenaryHelpMilestones.requiresAskForHelp(level)) {
+            return false;
+        }
+
+        ImageSearchResultData help = templateSearchHelper.locatePattern(
+                TemplatesEnum.MERCENARY_ASK_HELP_BUTTON,
+                SearchConfigConstants.SINGLE_WITH_RETRIES);
+        if (!help.isFound()) {
+            if (MercenaryHelpMilestones.isFinalLevel(level)) {
+                return restUntilDailyReset(
+                        "Mercenary final level " + level
+                                + " has no Request Help control (help already sent or hunt finished).");
+            }
+            LocalDateTime retryAt = LocalDateTime.now().plus(HELP_MISSING_RETRY);
+            String snapshot = TaskDiagnosticSnapshots.capture(
+                    emuManager, EMULATOR_NUMBER, "mercenaryevent", "ask-help-missing");
+            logWarning("Mercenary level " + level + " requires Ask for Help but the control was absent. Retrying at "
+                    + stamp(retryAt) + "; " + snapshot + ".");
+            reschedule(retryAt);
+            return true;
+        }
+
+        logInfo("Mercenary level " + level + " is a help milestone. Tapping Request Help (no Attack march).");
+        tapInside(help);
+        sleepTask(1500);
+
+        ImageSearchResultData confirm = templateSearchHelper.locatePattern(
+                TemplatesEnum.MERCENARY_ASK_HELP_CONFIRM,
+                SearchConfigConstants.SINGLE_WITH_RETRIES);
+        if (!confirm.isFound()) {
+            LocalDateTime retryAt = LocalDateTime.now().plus(HELP_MISSING_RETRY);
+            String snapshot = TaskDiagnosticSnapshots.capture(
+                    emuManager, EMULATOR_NUMBER, "mercenaryevent", "ask-help-confirm-missing");
+            logWarning("Request Help opened but Confirm was absent. Retrying at "
+                    + stamp(retryAt) + "; " + snapshot + ".");
+            reschedule(retryAt);
+            return true;
+        }
+
+        logInfo("Confirming Request Help dialog.");
+        tapInside(confirm);
+        sleepTask(1500);
+        LocalDateTime next = LocalDateTime.now().plus(HELP_RETRY_DELAY);
+        reschedule(next);
+        if (MercenaryHelpMilestones.isFinalLevel(level)) {
+            logInfo("Final help milestone (Lv." + level + ") confirmed. One verify visit at "
+                    + stamp(next) + "; then rest until daily reset if still finished.");
+        } else {
+            logInfo("Request Help confirmed. Next visit at " + stamp(next) + ".");
+        }
+        return true;
+    }
+
+    /**
+     * Level 25 with no Ask Help left: do not Attack. Rest until daily reset after
+     * the post-help verify visit.
+     */
+    private boolean restIfFinalLevelSettled(Integer level) {
+        if (!MercenaryHelpMilestones.isFinalLevel(level)) {
+            return false;
+        }
+        return restUntilDailyReset(
+                "Mercenary final level " + level + " reached; not starting a solo Attack.");
+    }
+
+    private boolean restUntilDailyReset(String reason) {
+        LocalDateTime next = GameTimeUtils.dailyResetTime();
+        String snapshot = TaskDiagnosticSnapshots.capture(
+                emuManager, EMULATOR_NUMBER, "mercenaryevent", "final-level-rest");
+        logInfo(reason + " Next visit at " + stamp(next) + "; " + snapshot + ".");
+        reschedule(next);
+        return true;
     }
 
     private boolean selectMercenaryEventLevel() {
@@ -371,7 +635,7 @@ public class MercenaryEventRoutine extends DelayedTask {
         return null;
     }
 
-    private void scoutAndAttack(ImageSearchResultData eventButton, boolean sameLevelAsLastTime) {
+    private void scoutAndAttack(ImageSearchResultData eventButton) {
         logInfo("Starting scout/attack process for mercenary event.");
 
         if (eventButton == null) {
@@ -383,6 +647,17 @@ public class MercenaryEventRoutine extends DelayedTask {
         tapInside(eventButton);
         sleepTask(4000); // Wait to travel to mercenary location on map
 
+        boolean sameLevelAsLastTime = noteLevelChange(checkMercenaryLevelPreAttack());
+        if (requestHelpWhenMilestone(lastMercenaryLevel)) {
+            return;
+        }
+        if (restIfFinalLevelSettled(lastMercenaryLevel)) {
+            return;
+        }
+        attackFromWorldPopup(sameLevelAsLastTime);
+    }
+
+    private void attackFromWorldPopup(boolean sameLevelAsLastTime) {
         // Determine whether to rally or attack
         boolean rally = false;
         ImageSearchResultData attackOrRallyButton = null;

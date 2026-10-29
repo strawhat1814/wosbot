@@ -69,7 +69,7 @@ public class LifeEssenceRoutine extends DelayedTask {
 
 		boolean weeklyScrollUnresolved = buyWeeklyScroll && shouldBuyWeeklyScroll() && !buyWeeklyFreeScroll();
 		if (!countsAsCompletedRun(weeklyScrollUnresolved)) {
-			scheduleRetry("Weekly scroll outcome is unknown");
+			handleUnresolvedWeeklyScroll(claim.confirmedClaims());
 			return;
 		}
 
@@ -322,6 +322,31 @@ public class LifeEssenceRoutine extends DelayedTask {
 		scheduleRetry("Life Essence claim unfinished after " + confirmedClaims + " confirmed claims");
 	}
 
+	private void handleUnresolvedWeeklyScroll(int confirmedClaims) {
+		LifeEssenceRetryPolicy.Decision decision =
+				LifeEssenceRetryPolicy.afterFailure(consecutiveFailures);
+		consecutiveFailures = decision.persistedFailures();
+		writeProfileSetting(ConfigurationKeyEnum.LIFE_ESSENCE_CONSECUTIVE_FAILURES_INT, consecutiveFailures);
+
+		if (decision.deferToNextDay()) {
+			LocalDateTime nextDay = GameTimeUtils.dailyResetTime();
+			writeProfileSetting(ConfigurationKeyEnum.LIFE_ESSENCE_NEXT_SCROLL_TIME_STRING, nextDay.toString());
+			logWarning("Weekly scroll outcome is unknown after 2 attempts. "
+					+ "Deferring weekly check until next day (" + nextDay
+					+ "). Claim cadence continues.");
+			likeIsland();
+			exitAndReschedule(confirmedClaims);
+			return;
+		}
+
+		Duration retryDelay = decision.retryDelay();
+		LocalDateTime nextAttempt = LocalDateTime.now().plus(retryDelay);
+		reschedule(nextAttempt);
+		logWarning("Weekly scroll outcome is unknown. Consecutive failures: " + consecutiveFailures
+				+ ". Task remains enabled and will retry in " + retryDelay.toMinutes()
+				+ " minutes at " + GameTimeUtils.formatCountdown(nextAttempt));
+	}
+
 	private void scheduleRetry(String reason) {
 		LifeEssenceRetryPolicy.Decision decision =
 				LifeEssenceRetryPolicy.afterFailure(consecutiveFailures);
@@ -329,13 +354,20 @@ public class LifeEssenceRoutine extends DelayedTask {
 
 		writeProfileSetting(ConfigurationKeyEnum.LIFE_ESSENCE_CONSECUTIVE_FAILURES_INT, consecutiveFailures);
 
-		Duration retryDelay = decision.retryDelay();
-		LocalDateTime nextAttempt = LocalDateTime.now().plus(retryDelay);
+		LocalDateTime nextAttempt = decision.deferToNextDay()
+				? GameTimeUtils.dailyResetTime()
+				: LocalDateTime.now().plus(decision.retryDelay());
 
 		reschedule(nextAttempt);
 
+		if (decision.deferToNextDay()) {
+			logWarning(reason + ". Daily attempt limit reached. Task remains enabled and will retry at next game reset: "
+					+ GameTimeUtils.formatCountdown(nextAttempt));
+			return;
+		}
+
 		logWarning(reason + ". Consecutive failures: " + consecutiveFailures
-				+ ". Task remains enabled and will retry in " + retryDelay.toMinutes()
+				+ ". Task remains enabled and will retry in " + decision.retryDelay().toMinutes()
 				+ " minutes at " + GameTimeUtils.formatCountdown(nextAttempt));
 	}
 

@@ -1,6 +1,8 @@
 package dev.frostguard.tasks.pets;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
 
@@ -9,30 +11,36 @@ import org.junit.jupiter.api.Test;
 class LifeEssenceRetryPolicyTest {
 
     @Test
-    void increasesShortBackoffForTheFirstFiveFailures() {
-        assertDecision(0, 1, Duration.ofMinutes(5));
-        assertDecision(1, 2, Duration.ofMinutes(10));
-        assertDecision(2, 3, Duration.ofMinutes(15));
-        assertDecision(3, 4, Duration.ofMinutes(20));
-        assertDecision(4, 5, Duration.ofMinutes(25));
+    void schedulesSecondAttemptAfterOneHour() {
+        LifeEssenceRetryPolicy.Decision decision = LifeEssenceRetryPolicy.afterFailure(0);
+
+        assertEquals(1, decision.persistedFailures());
+        assertEquals(Duration.ofHours(1), decision.retryDelay());
+        assertFalse(decision.deferToNextDay());
     }
 
     @Test
-    void retriesHourlyWithoutGrowingFailureStateAfterTheSixthFailure() {
-        assertDecision(5, 6, Duration.ofHours(1));
-        assertDecision(6, 6, Duration.ofHours(1));
-        assertDecision(Integer.MAX_VALUE, 6, Duration.ofHours(1));
+    void defersToNextDayAndClearsFailuresAfterSecondAttempt() {
+        LifeEssenceRetryPolicy.Decision decision = LifeEssenceRetryPolicy.afterFailure(1);
+
+        assertEquals(0, decision.persistedFailures());
+        assertTrue(decision.deferToNextDay());
+    }
+
+    @Test
+    void treatsAlreadySaturatedFailureStateAsNextDayDeferral() {
+        LifeEssenceRetryPolicy.Decision decision = LifeEssenceRetryPolicy.afterFailure(6);
+
+        assertEquals(0, decision.persistedFailures());
+        assertTrue(decision.deferToNextDay());
     }
 
     @Test
     void treatsMalformedNegativeFailureStateAsNoPreviousFailure() {
-        assertDecision(-7, 1, Duration.ofMinutes(5));
-    }
+        LifeEssenceRetryPolicy.Decision decision = LifeEssenceRetryPolicy.afterFailure(-7);
 
-    private void assertDecision(int previousFailures, int expectedFailures, Duration expectedDelay) {
-        LifeEssenceRetryPolicy.Decision decision = LifeEssenceRetryPolicy.afterFailure(previousFailures);
-
-        assertEquals(expectedFailures, decision.persistedFailures());
-        assertEquals(expectedDelay, decision.retryDelay());
+        assertEquals(1, decision.persistedFailures());
+        assertEquals(Duration.ofHours(1), decision.retryDelay());
+        assertFalse(decision.deferToNextDay());
     }
 }

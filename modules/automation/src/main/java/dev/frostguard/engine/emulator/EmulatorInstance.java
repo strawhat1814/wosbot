@@ -39,6 +39,7 @@ public abstract class EmulatorInstance {
     private final ConcurrentHashMap<String, Long>         runExpiry = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, RawImageData> lastFrame = new ConcurrentHashMap<>();
     private final ReentrantLock bridgeMtx = new ReentrantLock();
+    private final AdbCircuitBreaker circuitBreaker = new AdbCircuitBreaker();
 
     protected abstract String  getDeviceSerial(String idx);
     public    abstract void    launchEmulator(String idx);
@@ -47,7 +48,17 @@ public abstract class EmulatorInstance {
 
     protected EmulatorInstance(String consolePath) {
         this.consolePath = consolePath;
+        circuitBreaker.configure(
+                () -> {},
+                () -> {},
+                Collections::emptyList,
+                this::recoverAdbFully,
+                this::adbPath);
         initBridge();
+    }
+
+    public AdbCircuitBreaker circuitBreaker() {
+        return circuitBreaker;
     }
 
     // --- ADB bridge lifecycle ---
@@ -58,19 +69,100 @@ public abstract class EmulatorInstance {
         bridge = AndroidDebugBridge.createBridge(adbPath(), true, 5000, TimeUnit.MILLISECONDS);
     }
 
+    /**
+     * Recreate the ddmlib bridge. Prefer {@link #requestCoordinatedAdbRecovery(String)}
+     * when queues are running — bare restarts race GlobalMonitor and peer profiles.
+     */
     public void restartAdb() {
-        if (!bridgeMtx.tryLock()) { LOG.debug("ADB restart in progress elsewhere"); return; }
+        if (!bridgeMtx.tryLock()) {
+            LOG.debug("ADB restart in progress elsewhere");
+            return;
+        }
         try {
-            teardown(); AndroidDebugBridge.init(false);
-            bridge = AndroidDebugBridge.createBridge(adbPath(), true, 5000, TimeUnit.MILLISECONDS);
-            devCache.clear(); devExpiry.clear(); runCache.clear(); runExpiry.clear();
-            LOG.info("ADB bridge restarted");
-        } finally { bridgeMtx.unlock(); }
+            recreateBridgeLocked();
+        } finally {
+            bridgeMtx.unlock();
+        }
+    }
+
+    /**
+     * Exclusive kill-server + bridge recreate + reconnect/probe for every device.
+     * Invoked by {@link AdbCircuitBreaker} during coordinated recovery.
+     * Calls {@code onDeviceProbed} after each probe so Telegram can report live.
+     */
+    public AdbRecoveryReport recoverAdbFully(Collection<String> deviceIndexes,
+            java.util.function.BiConsumer<String, Boolean> onDeviceProbed)
+            throws InterruptedException {
+        bridgeMtx.lock();
+        try {
+            LOG.warn("Coordinated ADB recovery: kill-server + bridge restart");
+            killAdb();
+            sleep(2000);
+            recreateBridgeLocked();
+            sleep(3000);
+        } finally {
+            bridgeMtx.unlock();
+        }
+
+        java.util.function.BiConsumer<String, Boolean> listener =
+                onDeviceProbed == null ? (index, ok) -> {} : onDeviceProbed;
+        Map<String, Boolean> deviceOk = new LinkedHashMap<>();
+        if (deviceIndexes != null) {
+            for (String idx : deviceIndexes) {
+                if (idx == null || idx.isBlank()) {
+                    continue;
+                }
+                invalidateAllCaches(idx);
+                boolean ok = probe(idx);
+                deviceOk.put(idx, ok);
+                if (ok) {
+                    LOG.info("ADB recovery probe ok for dev {}", idx);
+                } else {
+                    LOG.warn("ADB recovery probe failed for dev {}", idx);
+                }
+                try {
+                    listener.accept(idx, ok);
+                } catch (Exception e) {
+                    LOG.warn("ADB recovery device probe listener failed for {}: {}",
+                            idx, e.getMessage());
+                }
+            }
+        }
+        AdbRecoveryReport report = new AdbRecoveryReport(deviceOk);
+        if (!report.anyHealthy()) {
+            LOG.error("Coordinated ADB recovery: devices healthy {}/{}",
+                    report.okCount(), report.totalCount());
+        }
+        return report;
+    }
+
+    public boolean requestCoordinatedAdbRecovery(String reason) {
+        return circuitBreaker.requestRecovery(reason);
+    }
+
+    private void recreateBridgeLocked() {
+        teardown();
+        AndroidDebugBridge.init(false);
+        bridge = AndroidDebugBridge.createBridge(adbPath(), true, 5000, TimeUnit.MILLISECONDS);
+        devCache.clear();
+        devExpiry.clear();
+        runCache.clear();
+        runExpiry.clear();
+        LOG.info("ADB bridge restarted");
     }
 
     private void teardown() {
-        AndroidDebugBridge.disconnectBridge(5000, TimeUnit.MILLISECONDS);
-        AndroidDebugBridge.terminate();
+        try {
+            AndroidDebugBridge.disconnectBridge(5000, TimeUnit.MILLISECONDS);
+        } catch (Exception e) {
+            LOG.warn("disconnectBridge failed: {}", e.getMessage());
+        }
+        try {
+            AndroidDebugBridge.terminate();
+        } catch (Exception e) {
+            LOG.warn("AndroidDebugBridge.terminate failed: {}", e.getMessage());
+        }
+        bridge = null;
     }
 
     private String adbPath() {
@@ -119,13 +211,37 @@ public abstract class EmulatorInstance {
         return null;
     }
 
-    private IDevice scan(String serial) {
-        for (IDevice d : bridge.getDevices()) if (serial.equals(d.getSerialNumber())) return d;
+    /** Package-visible for null-bridge unit tests. */
+    IDevice scan(String serial) {
+        AndroidDebugBridge active = bridge;
+        if (active == null) {
+            circuitBreaker.recordFailure("this.bridge is null during device scan");
+            return null;
+        }
+        IDevice[] devices;
+        try {
+            devices = active.getDevices();
+        } catch (Exception e) {
+            circuitBreaker.recordFailure("bridge.getDevices failed: " + e.getMessage());
+            return null;
+        }
+        if (devices == null) {
+            return null;
+        }
+        for (IDevice d : devices) {
+            if (serial.equals(d.getSerialNumber())) {
+                return d;
+            }
+        }
         return null;
     }
 
     private boolean adbConnect(String serial) {
         if (Thread.currentThread().isInterrupted()) return false;
+        if (!circuitBreaker.isTransportAllowed()) {
+            LOG.debug("Skipping adb connect while circuit breaker is open/cooldown");
+            return false;
+        }
         try {
             String ep = serial.startsWith("emulator-") ? "127.0.0.1:" + serial.substring(9) : serial;
             BoundedProcessRunner.ProcessResult result = BoundedProcessRunner.run(
@@ -133,15 +249,20 @@ public abstract class EmulatorInstance {
                             .directory(new File(adbPath()).getParentFile()),
                     ADB_CONNECT_TIMEOUT);
             if (result.timedOut()) {
-                LOG.error("adb connect to {} did not respond within {} seconds; killed the subprocess",
-                        ep, ADB_CONNECT_TIMEOUT.toSeconds());
+                String msg = "adb connect to " + ep + " did not respond within "
+                        + ADB_CONNECT_TIMEOUT.toSeconds() + " seconds; killed the subprocess";
+                LOG.error(msg);
+                circuitBreaker.recordFailure(msg);
                 return false;
             }
             String output = result.output();
             return result.exitCode() == 0
                     && (output.contains("connected") || output.contains("already connected"));
         } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
-          catch (Exception e) { LOG.error("Connect error {}: {}", serial, e.getMessage()); }
+          catch (Exception e) {
+              LOG.error("Connect error {}: {}", serial, e.getMessage());
+              circuitBreaker.recordFailure("Connect error " + serial + ": " + e.getMessage());
+          }
         return false;
     }
 
@@ -175,9 +296,20 @@ public abstract class EmulatorInstance {
     protected <T> T withRetries(String idx, Function<IDevice, T> action, String tag) {
         if (!isRunning(idx)) LOG.warn("Device {} appears offline before {} — will attempt retries", idx, tag);
 
+        // Never close/relaunch LDPlayer while ADB is in coordinated recovery or
+        // cooldown — multi-boot connect timeouts open the breaker, and treating
+        // that as "emulator dead" reboots instances that are still starting.
+        if (!circuitBreaker.isCaptureAllowed()) {
+            throw unavailableDuringBreaker(tag, idx);
+        }
+
         // Phase 1: standard retries
         T result = retryLoop(idx, action, tag, "");
         if (result != null) return result;
+
+        if (!circuitBreaker.isCaptureAllowed()) {
+            throw unavailableDuringBreaker(tag, idx);
+        }
 
         // Phase 2: emulator restart
         if (Thread.currentThread().isInterrupted())
@@ -193,13 +325,30 @@ public abstract class EmulatorInstance {
         throw new ADBConnectionException("Exhausted retries for " + tag + " on " + idx);
     }
 
+    private ADBConnectionException unavailableDuringBreaker(String tag, String idx) {
+        AdbCircuitBreaker.State st = circuitBreaker.state();
+        return new ADBConnectionException(
+                "ADB unavailable for " + tag + " on " + idx
+                        + "; circuit breaker=" + st
+                        + " — skipping emulator reboot");
+    }
+
     private <T> T retryLoop(String idx, Function<IDevice, T> action, String tag, String prefix) {
         for (int i = 1; i <= RETRY_CEILING; i++) {
             if (Thread.currentThread().isInterrupted())
                 throw new ADBConnectionException("Interrupted during " + prefix + tag);
+            if (!circuitBreaker.isCaptureAllowed()) {
+                return null;
+            }
             try {
                 IDevice d = findDevice(idx);
-                if (d == null) { if (i == RETRY_CEILING / 2) restartAdb(); sleep(INTER_RETRY_MS / 2); continue; }
+                if (d == null) {
+                    if (i == RETRY_CEILING / 2 && circuitBreaker.isCaptureAllowed()) {
+                        requestCoordinatedAdbRecovery("device absent mid-retry for " + tag);
+                    }
+                    sleep(INTER_RETRY_MS / 2);
+                    continue;
+                }
                 if (!d.isOnline()) { sleep(2000); continue; }
                 return action.apply(d);
             } catch (InterruptedException e) {
@@ -207,8 +356,13 @@ public abstract class EmulatorInstance {
                 throw new ADBConnectionException("Interrupted during " + prefix + tag, e);
             } catch (Exception e) {
                 LOG.warn("{}Attempt {}/{} for {}: {}", prefix, i, RETRY_CEILING, tag, e.getMessage());
-                if (i >= RETRY_CEILING - 2) { try { restartAdb(); } catch (Exception ignored) {} sleep(INTER_RETRY_MS); }
-                else sleep(INTER_RETRY_MS / 2);
+                circuitBreaker.recordFailure(e.getMessage());
+                if (i >= RETRY_CEILING - 2 && circuitBreaker.isCaptureAllowed()) {
+                    requestCoordinatedAdbRecovery("retries exhausted for " + tag + ": " + e.getMessage());
+                    sleep(INTER_RETRY_MS);
+                } else {
+                    sleep(INTER_RETRY_MS / 2);
+                }
             }
         }
         return null;
@@ -219,14 +373,14 @@ public abstract class EmulatorInstance {
     public boolean performAdbHealthCheck(String idx) {
         LOG.info("ADB health check for dev {}", idx);
         if (probe(idx)) return true;
+        if (!circuitBreaker.isCaptureAllowed()) {
+            LOG.warn("ADB health check skipped coordinated recovery — circuit breaker={}",
+                    circuitBreaker.state());
+            return false;
+        }
 
-        LOG.warn("Failed — restarting bridge");
-        try { restartAdb(); Thread.sleep(3000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); return false; }
-        if (probe(idx)) return true;
-
-        LOG.warn("Still failing — kill-server + restart");
-        try { killAdb(); Thread.sleep(2000); restartAdb(); Thread.sleep(3000); }
-        catch (InterruptedException e) { Thread.currentThread().interrupt(); return false; }
+        LOG.warn("Failed — requesting coordinated ADB recovery");
+        requestCoordinatedAdbRecovery("health check failed for dev " + idx);
         return probe(idx);
     }
 
@@ -246,6 +400,14 @@ public abstract class EmulatorInstance {
     public RawImageData captureScreenshot(String idx) {
         String serial = getDeviceSerial(idx);
         if (serial == null) throw new ADBConnectionException("No serial for dev " + idx);
+        if (!circuitBreaker.isCaptureAllowed()) {
+            AdbCircuitBreaker.State st = circuitBreaker.state();
+            throw new ADBConnectionException(
+                    "ADB capture suppressed; circuit breaker=" + st
+                            + (st == AdbCircuitBreaker.State.COOLDOWN
+                                    ? " until " + circuitBreaker.lastOpenReason()
+                                    : " reason=" + circuitBreaker.lastOpenReason()));
+        }
         ByteArrayOutputStream buf = new ByteArrayOutputStream(720 * 1280 * 4 + 64);
         try {
             IDevice d = getCachedDevice(idx);
@@ -268,12 +430,15 @@ public abstract class EmulatorInstance {
             System.arraycopy(raw, headerLength, px, 0, px.length);
             RawImageData frame = RawImageData.capture(px, w, h, bitsPerPixel);
             lastFrame.put(idx, frame);
+            circuitBreaker.recordSuccess();
             return frame;
         } catch (Exception e) {
             if (e instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
             }
-            throw new RuntimeException(captureFailureMessage(idx, serial, buf.size(), e), e);
+            String message = captureFailureMessage(idx, serial, buf.size(), e);
+            circuitBreaker.recordFailure(message);
+            throw new RuntimeException(message, e);
         }
     }
 

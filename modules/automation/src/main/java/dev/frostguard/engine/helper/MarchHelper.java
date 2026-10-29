@@ -11,6 +11,7 @@ import dev.frostguard.api.domain.MarchSlotState;
 import dev.frostguard.api.domain.PointData;
 import dev.frostguard.api.domain.RawImageData;
 import dev.frostguard.engine.emulator.EmulatorController;
+import dev.frostguard.engine.error.HomeNotFoundException;
 import dev.frostguard.engine.input.TapInteractionService;
 import dev.frostguard.engine.input.TapJitterPolicy;
 import dev.frostguard.engine.nav.CommonGameAreas;
@@ -331,9 +332,7 @@ public class MarchHelper {
 
     public void openLeftMenuCitySection(boolean cityTab) {
         log.debug("Opening left menu section - " + (cityTab ? "city" : "wilderness"));
-        if (!sidebar.openSection(cityTab ? SidebarSection.CITY : SidebarSection.WILDERNESS)) {
-            throw new IllegalStateException("Could not open the requested sidebar section");
-        }
+        requireSidebarSection(cityTab);
     }
 
     // Closes the left panel only after the selected tab proves that it is open.
@@ -344,8 +343,15 @@ public class MarchHelper {
     /** Opens or reuses the requested section without changing its current scroll position. */
     public void openLeftMenuSection(boolean cityTab) {
         log.debug("Left menu without scroll reset - " + (cityTab ? "city" : "wilderness"));
-        if (!sidebar.openSection(cityTab ? SidebarSection.CITY : SidebarSection.WILDERNESS)) {
-            throw new IllegalStateException("Could not open the requested sidebar section");
+        requireSidebarSection(cityTab);
+    }
+
+    private void requireSidebarSection(boolean cityTab) {
+        SidebarSection section = cityTab ? SidebarSection.CITY : SidebarSection.WILDERNESS;
+        if (!sidebar.openSection(section)) {
+            // Same recovery class as Intel sidebar failures: re-init instead of action-required.
+            throw new HomeNotFoundException(
+                    "Could not open the requested sidebar section (" + section + ")");
         }
     }
 

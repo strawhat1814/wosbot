@@ -48,6 +48,22 @@ class RepeatedResourceReplenishmentFlowTest {
 
         assertEquals(RepeatedResourceReplenishmentFlow.Outcome.REPLENISH_BUTTON_MISSING, result.outcome());
         assertEquals(0, ui.confirmations);
+        assertEquals(3, ui.replenishPollsAfterObtain);
+        assertEquals(2, ui.waitAfterObtainCalls);
+    }
+
+    @Test
+    void findsReplenishAllAfterObtainSheetSettles() {
+        // After Obtain the sheet stays READY until the 2nd post-Obtain poll flips to REPLENISH.
+        ScriptedUi ui = new ScriptedUi(states(State.OBTAIN, State.READY));
+        ui.replenishVisibleAfterObtainPoll = 2;
+
+        var result = RepeatedResourceReplenishmentFlow.run(ui, 4);
+
+        assertTrue(result.ready());
+        assertEquals(1, result.replenishedResources());
+        assertEquals(1, ui.confirmations);
+        assertEquals(1, ui.waitAfterObtainCalls);
     }
 
     @Test
@@ -77,6 +93,11 @@ class RepeatedResourceReplenishmentFlowTest {
         private State current;
         private int obtainScreensOpened;
         private int confirmations;
+        private int replenishPollsAfterObtain;
+        private int waitAfterObtainCalls;
+        private boolean afterObtain;
+        /** 1-based poll index when Replenish becomes visible after Obtain (0 = never). */
+        private int replenishVisibleAfterObtainPoll;
 
         private ScriptedUi(Queue<State> states) {
             this.states = states;
@@ -85,6 +106,14 @@ class RepeatedResourceReplenishmentFlowTest {
 
         @Override
         public PointData findReplenishAll() {
+            if (afterObtain) {
+                replenishPollsAfterObtain++;
+                if (replenishVisibleAfterObtainPoll > 0
+                        && replenishPollsAfterObtain >= replenishVisibleAfterObtainPoll) {
+                    current = State.REPLENISH;
+                    afterObtain = false;
+                }
+            }
             return current == State.REPLENISH ? BUTTON : null;
         }
 
@@ -96,12 +125,20 @@ class RepeatedResourceReplenishmentFlowTest {
         @Override
         public void openObtain(PointData point) {
             obtainScreensOpened++;
+            afterObtain = true;
+            replenishPollsAfterObtain = 0;
             advance();
+        }
+
+        @Override
+        public void waitAfterObtainOpened(int attempt) {
+            waitAfterObtainCalls++;
         }
 
         @Override
         public void replenishAndConfirm(PointData point) {
             confirmations++;
+            afterObtain = false;
             advance();
         }
 

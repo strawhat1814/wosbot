@@ -24,6 +24,7 @@ import java.net.URL;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
@@ -150,6 +151,69 @@ public class ProfileManagerActionController implements ProfileStatusChangeListen
 
 	public boolean saveProfile(ProfileAux currentProfile) {
 		return iModel.saveProfile(toDescriptor(currentProfile));
+	}
+
+	/**
+	 * Saves the profile and keeps the shared-login peer link mutual: the selected
+	 * peer points back here, and a replaced previous peer is cleared when it still
+	 * pointed at this profile.
+	 */
+	public boolean saveProfileWithSharedLoginPeer(ProfileAux currentProfile, Long previousPeerId) {
+		if (!saveProfile(currentProfile)) {
+			return false;
+		}
+		Long selfId = currentProfile.getId();
+		Long newPeerId = currentProfile.getSharedLoginPeerProfileId();
+		if (previousPeerId != null && !Objects.equals(previousPeerId, newPeerId)) {
+			clearSharedLoginPeerIfPointsTo(previousPeerId, selfId);
+		}
+		if (newPeerId != null) {
+			ProfileAux peer = findProfileAuxById(newPeerId);
+			if (peer != null && !Objects.equals(peer.getSharedLoginPeerProfileId(), selfId)) {
+				peer.setSharedLoginPeerProfileId(selfId);
+				if (!saveProfile(peer)) {
+					return false;
+				}
+			}
+		}
+		return true;
+	}
+
+	public List<ProfileAux> listProfilesForPeerPicker() {
+		return iModel.getProfiles().stream().map(account -> new ProfileAux(
+				account.getId(),
+				account.getName(),
+				account.getEmulatorNumber(),
+				Boolean.TRUE.equals(account.getEnabled()),
+				account.getPriority(),
+				"NOT RUNNING",
+				account.getReconnectionTime(),
+				account.getCharacterId(),
+				account.getCharacterName(),
+				account.getCharacterAllianceCode(),
+				account.getCharacterServer(),
+				account.getSharedLoginPeerProfileId())).toList();
+	}
+
+	private void clearSharedLoginPeerIfPointsTo(Long profileId, Long expectedPeerId) {
+		ProfileAux profile = findProfileAuxById(profileId);
+		if (profile == null) {
+			return;
+		}
+		if (Objects.equals(profile.getSharedLoginPeerProfileId(), expectedPeerId)) {
+			profile.setSharedLoginPeerProfileId(null);
+			saveProfile(profile);
+		}
+	}
+
+	private ProfileAux findProfileAuxById(Long profileId) {
+		if (profileId == null) {
+			return null;
+		}
+		return listProfilesForPeerPicker().stream()
+				.filter(profile -> Objects.equals(profile.getId(), profileId))
+				.findFirst()
+				.orElse(null);
 	}
 
 	public boolean saveProfileSetting(Long profileId, ConfigurationKeyEnum key, String value) {
@@ -382,7 +446,8 @@ public class ProfileManagerActionController implements ProfileStatusChangeListen
 			currentProfile.getCharacterId(),
 			currentProfile.getCharacterName(),
 			currentProfile.getCharacterAllianceCode(),
-			currentProfile.getCharacterServer()
+			currentProfile.getCharacterServer(),
+			currentProfile.getSharedLoginPeerProfileId()
 		);
 
 		currentProfile.getConfigs().forEach(config ->

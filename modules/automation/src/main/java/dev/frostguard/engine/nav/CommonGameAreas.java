@@ -43,12 +43,27 @@ public final class CommonGameAreas {
     // ── account / energy panel ───────────────────────────────────────
 
     public static final AreaData PROFILE_AVATAR        = region(24, 24, 61, 61);
+    // White digits on the green pill directly under the chief avatar. The same pill is on
+    // City and World. The box starts to the right of the bolt and stops above the up-arrow.
+    // Measured 2026-10-20: "224" glyphs sit at about x=38..61, y=105..113; the right edge
+    // leaves room for a fourth digit still inside the pill.
+    public static final AreaData STAMINA_HUD_OCR_AREA  = region(34, 100, 90, 118);
     public static final AreaData STAMINA_BUTTON        = region(223, 1101, 244, 1123);
     public static final AreaData STAMINA_OCR_AREA      = region(324, 255, 477, 289);
     public static final AreaData SPENT_STAMINA_OCR_AREA = region(540, 1215, 590, 1245);
     // English "Tap anywhere to exit" hints are rendered in this lower strip on result overlays.
     public static final AreaData STARTUP_EXIT_HINT_OCR_AREA = region(0, 1160, 719, 1279);
     public static final AreaData STARTUP_EXIT_HINT_TAP_AREA = region(180, 1160, 540, 1279);
+
+    /** Android ANR dialog body (…isn't responding / Close app / Wait) on 720×1280. */
+    public static final AreaData ANR_DIALOG_OCR_AREA = region(60, 420, 660, 900);
+    /** Prefer Wait (right action); never Close app — that kills the game mid-session. */
+    public static final AreaData ANR_WAIT_TAP_AREA = region(400, 650, 640, 860);
+
+    /** In-game "Quit Game?" body text when Back is pressed on City/World. */
+    public static final AreaData QUIT_GAME_DIALOG_OCR_AREA = region(80, 480, 640, 780);
+    /** Left action (Cancel) — never Confirm, which would exit the game. */
+    public static final AreaData QUIT_GAME_CANCEL_TAP_AREA = region(90, 880, 350, 1040);
 
     // The cooldown stays in the top banner while Intel markers remain, then moves to the center
     // after every completed Intel reward has been claimed.
@@ -64,9 +79,12 @@ public final class CommonGameAreas {
 
     // The collapsed panel exposes only a thin handle at the left edge. A trigger tap is allowed only
     // after the caller has proved that no selected tab is visible, and the result is then verified.
-    // Keep the trigger inside the thin arrow that remains exposed beside an expanded World march
-    // panel, but away from the absolute display edge where MuMu can discard an otherwise valid tap.
-    public static final AreaData LEFT_MENU_TRIGGER        = region(6, 546, 16, 554);
+    // Operator rectangle: top-left (1,485) to bottom-right (7,615). Entire area is valid
+    // (corners and mid). Open uses one vertical half first; fallback uses the opposite half
+    // so a World "Add March" overlap does not get hit twice.
+    public static final AreaData LEFT_MENU_TRIGGER        = region(1, 485, 7, 615);
+    /** Full operator rectangle retained for callers that still reference the fallback name. */
+    public static final AreaData LEFT_MENU_TRIGGER_FALLBACK = region(1, 485, 7, 615);
     public static final AreaData LEFT_MENU_CITY_TAB       = region(9, 246, 146, 293);
     public static final AreaData LEFT_MENU_WILDERNESS_TAB = region(155, 246, 293, 293);
     public static final AreaData LEFT_MENU_DAILY_TAB      = region(302, 246, 438, 293);
@@ -218,12 +236,19 @@ public final class CommonGameAreas {
             region(110, 670, 152, 712), region(375, 670, 417, 712)
     };
 
+    // Mercenary level digits from 2026-10-17 captures (720x1280):
+    // Pre-scout = pink "Lv. N" badge on the Events merc card (white digits).
+    // Pre-attack = "Lv. N …" title on the World merc popup (blue digits on white).
+    public static final AreaData MERCENARY_LEVEL_PRE_SCOUT_OCR_AREA = region(355, 870, 435, 906);
+    /** Wide enough for two-digit World popup titles (Lv. 10–25); narrow crops were reading 25 as 2. */
+    public static final AreaData MERCENARY_LEVEL_PRE_ATTACK_OCR_AREA = region(175, 840, 340, 890);
+
     // Polar Terror search panel: the level number sits in the pill right of the slider, not on the
     // slider bar itself.
     public static final AreaData POLAR_LEVEL_DISPLAY = region(565, 1030, 665, 1078);
     public static final AreaData POLAR_SEARCH_BUTTON = region(301, 1200, 412, 1229);
-    // A newly revealed section heading enters this strip before more reward rows are swiped into view.
-    public static final AreaData POLAR_SPECIAL_REWARDS_HEADER = region(35, 1090, 685, 1185);
+    // Operator crop: top-left (182,499) to bottom-right (537,573).
+    public static final AreaData POLAR_SPECIAL_REWARDS_HEADER = region(182, 499, 537, 573);
     public static final PointData POLAR_REWARD_DETAILS_CLOSE = point(665, 195);
 
     // ── stamina "Obtain more" dialog ─────────────────────────────────
@@ -240,8 +265,10 @@ public final class CommonGameAreas {
 
     // ── character identity ───────────────────────────────────────────
 
-    public static final AreaData CHARACTER_ID_OCR_AREA   = region(300, 940, 465, 980);
-    public static final AreaData CHARACTER_NAME_OCR_AREA = region(280, 890, 600, 930);
+    // Profile sheet name/ID bands (2026-10-20 UI): name sits above the ID line.
+    // Captured from live avatar sheet; old y~890–980 was reading the ID as the name.
+    public static final AreaData CHARACTER_ID_OCR_AREA   = region(275, 901, 462, 932);
+    public static final AreaData CHARACTER_NAME_OCR_AREA = region(281, 831, 610, 884);
 
     public static final AreaData PROFILE_SETTINGS_BUTTON_AREA =
             region(540, 1150, 720, 1250);

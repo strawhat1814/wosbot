@@ -334,7 +334,8 @@ public class CityEventsExtraLayoutController extends AbstractProfileController {
             currentProfile.getCharacterId(),
             currentProfile.getCharacterName(),
             currentProfile.getCharacterAllianceCode(),
-            currentProfile.getCharacterServer()
+            currentProfile.getCharacterServer(),
+            currentProfile.getSharedLoginPeerProfileId()
         );
         currentProfile.getConfigs().forEach(config ->
             descriptor.getConfigs().add(new ConfigData(currentProfile.getId(), config.getName(), config.getValue())));

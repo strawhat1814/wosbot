@@ -135,6 +135,15 @@ public class TapInteractionService {
         repeatTaps(count, delayMs, () -> TapJitterPolicy.sampleInside(area));
     }
 
+    /**
+     * Uniform sample over the full inclusive rectangle (no edge margin / center bias).
+     * Prefer this for operator-verified strips where every pixel in the box is valid.
+     */
+    public void tapInsideUniform(AreaData area, int count, int delayMs) {
+        if (area == null) throw new IllegalArgumentException("area must not be null");
+        repeatTaps(count, delayMs, () -> TapJitterPolicy.sampleInsideUniform(area));
+    }
+
     // ── precision points ────────────────────────────────────────────
 
     /**

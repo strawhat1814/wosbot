@@ -944,7 +944,8 @@ public class ProfileManagerLayoutController implements IProfileChangeObserver {
 				account.getCharacterId(),
 				account.getCharacterName(),
 				account.getCharacterAllianceCode(),
-				account.getCharacterServer());
+				account.getCharacterServer(),
+				account.getSharedLoginPeerProfileId());
 		account.getConfigs().forEach(config ->
 				profileAux.getConfigs().add(new ConfigAux(config.getConfigurationName(), config.getValue())));
 		profileAux.setTags(account.getTags());

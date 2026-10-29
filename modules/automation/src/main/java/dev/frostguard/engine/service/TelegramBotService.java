@@ -10,13 +10,17 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Optional;
+import java.util.Map;
+import java.util.Set;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Properties;
+import java.util.stream.Collectors;
 
 import javax.imageio.ImageIO;
 
@@ -28,6 +32,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import dev.frostguard.api.configs.TpDailyTaskEnum;
+import dev.frostguard.engine.emulator.AdbCircuitBreaker;
+import dev.frostguard.engine.emulator.AdbRecoveryReport;
 import dev.frostguard.engine.emulator.EmulatorController;
 import dev.frostguard.api.domain.BotStateData;
 import dev.frostguard.api.domain.AccountDescriptor;
@@ -208,16 +214,25 @@ public class TelegramBotService implements BotStateListener {
         } else if (text.startsWith("/status") || text.contains("status")) {
             sendMessage(chatId, botCurrentlyRunning ? "✅ Bot is *running*." : "🔴 Bot is *stopped*.");
         } else if (text.startsWith("/screenshot") || text.contains("screenshot")) {
-            sendMessage(chatId, "📸 Capturing screenshot...");
+            sendMessage(chatId, "📸 Capturing screenshots…");
             Thread.ofVirtual().start(() -> sendScreenshot(chatId));
         } else if (text.startsWith("/queue") || text.contains("queue")) {
             Thread.ofVirtual().start(() -> handleTaskQueue(chatId));
-        } else if (text.startsWith("/stats") || text.contains("stats")) {
+        } else if (text.startsWith("/dailystats") || text.startsWith("/dailystat")
+                || text.contains("daily stats") || text.contains("dailystats")) {
+            Thread.ofVirtual().start(() -> handleDailyStatsCommand(chatId));
+        } else if (text.startsWith("/allstats") || text.startsWith("/stats")
+                || text.contains("all stats") || text.contains("stats")) {
             Thread.ofVirtual().start(() -> handleStatsCommand(chatId));
         } else if (text.startsWith("/logs") || text.contains("logs")) {
             Thread.ofVirtual().start(() -> handleLogsCommand(chatId));
         } else if (text.startsWith("/profiles") || text.contains("profiles")) {
             Thread.ofVirtual().start(() -> handleProfilesCommand(chatId, -1L));
+        } else if (text.startsWith("/closeemus") || text.contains("closeemus")
+                || text.contains("close emus") || text.contains("close emulators")) {
+            Thread.ofVirtual().start(() -> handleCloseEmusCommand(chatId, -1L));
+        } else if (text.startsWith("/adbreboot") || text.contains("adbreboot")) {
+            Thread.ofVirtual().start(() -> handleAdbRebootCommand(chatId));
         } else if (text.startsWith("/reboot") || text.contains("reboot")) {
             Thread.ofVirtual().start(() -> handleRebootCommand(chatId));
         } else if (text.startsWith("/help") || text.contains("help")) {
@@ -257,15 +272,21 @@ public class TelegramBotService implements BotStateListener {
             cmds.add(objectMapper.createObjectNode().put("command", "status").put("description",
                     "Show automation status"));
             cmds.add(objectMapper.createObjectNode().put("command", "screenshot").put("description",
-                    "Capture & send emulator screen"));
+                    "Capture screens from all running profiles"));
             cmds.add(objectMapper.createObjectNode().put("command", "queue").put("description",
                     "Task queue with schedule/remove/run"));
-            cmds.add(objectMapper.createObjectNode().put("command", "stats").put("description",
-                    "Bot activity statistics per profile"));
+            cmds.add(objectMapper.createObjectNode().put("command", "allstats").put("description",
+                    "Full all-time statistics per profile"));
+            cmds.add(objectMapper.createObjectNode().put("command", "dailystats").put("description",
+                    "Full Today (UTC) statistics per profile"));
             cmds.add(objectMapper.createObjectNode().put("command", "logs").put("description",
                     "Download log files"));
             cmds.add(objectMapper.createObjectNode().put("command", "profiles").put("description",
                     "View & toggle profiles on/off"));
+            cmds.add(objectMapper.createObjectNode().put("command", "closeemus").put("description",
+                    "Close unused or all configured emulators"));
+            cmds.add(objectMapper.createObjectNode().put("command", "adbreboot").put("description",
+                    "Pause queues, reboot ADB bridge, resume"));
             cmds.add(objectMapper.createObjectNode().put("command", "reboot").put("description",
                     "Restart bot + emulators"));
             cmds.add(objectMapper.createObjectNode().put("command", "help").put("description", "Show help message"));
@@ -307,12 +328,15 @@ public class TelegramBotService implements BotStateListener {
                 + "`/startbot`    — Begin the automation routines\n"
                 + "`/stopbot`     — Pause the automation routines\n"
                 + "`/status`      — Show whether automation is running\n"
+                + "`/adbreboot`   — Pause queues, reboot ADB, resume\n"
                 + "`/reboot`      — Restart bot + emulators\n"
+                + "`/closeemus`   — Close unused or all configured emulators\n"
                 + "\n"
                 + "📊 *Monitoring & Info*\n"
-                + "`/screenshot`  — Capture & send emulator screen\n"
+                + "`/screenshot`  — Capture screens from all running profiles\n"
                 + "`/queue`       — Task queue (schedule / remove / run)\n"
-                + "`/stats`       — Bot activity statistics per profile\n"
+                + "`/allstats`    — Full all-time statistics per profile\n"
+                + "`/dailystats`  — Full Today (UTC) statistics per profile\n"
                 + "`/logs`        — Download the Frostguard log\n"
                 + "`/profiles`    — View & toggle profiles on/off\n"
                 + "\n"
@@ -333,46 +357,115 @@ public class TelegramBotService implements BotStateListener {
                 sendMessage(chatId, "❌ No profiles configured.");
                 return;
             }
-            Optional<AccountDescriptor> enabledProfile = profiles.stream()
-                    .filter(AccountDescriptor::getEnabled)
-                    .findFirst();
-            if (enabledProfile.isEmpty()) {
+
+            List<AccountDescriptor> targets = profiles.stream()
+                    .filter(p -> Boolean.TRUE.equals(p.getEnabled()))
+                    .toList();
+            if (targets.isEmpty()) {
                 sendMessage(chatId, "❌ No enabled profiles found.");
                 return;
             }
-            String emulatorNumber = enabledProfile.get().getEmulatorNumber();
-            EmulatorController emuManager = EmulatorController.getInstance();
 
-            RawImageData raw = null;
-            try {
-                raw = emuManager.captureScreen(emulatorNumber);
-            } catch (Exception firstAttempt) {
-                // ADB device cache may be stale — restart ADB server and retry once
-                logger.warn("Screenshot first attempt failed ({}), restarting ADB and retrying…",
-                        firstAttempt.getMessage());
-                sendMessage(chatId, "⏳ Device not ready — reconnecting ADB…");
+            EmulatorController emuManager = EmulatorController.getInstance();
+            List<AccountDescriptor> running = new ArrayList<>();
+            java.util.LinkedHashSet<String> seenEmulators = new java.util.LinkedHashSet<>();
+            for (AccountDescriptor profile : targets) {
+                String emulatorNumber = profile.getEmulatorNumber();
+                if (emulatorNumber == null || emulatorNumber.isBlank()) {
+                    continue;
+                }
+                if (!seenEmulators.add(emulatorNumber)) {
+                    continue; // one shot per emulator instance
+                }
                 try {
-                    emuManager.restartAdbServer();
-                    Thread.sleep(2000); // give ADB time to re-discover devices
-                    raw = emuManager.captureScreen(emulatorNumber);
-                } catch (Exception retryFailed) {
-                    logger.error("Screenshot retry also failed: {}", retryFailed.getMessage());
-                    sendMessage(chatId, "❌ Screenshot failed after ADB restart. "
-                            + "Is the emulator running?\n\nError: " + retryFailed.getMessage());
-                    return;
+                    if (!emuManager.isRunning(emulatorNumber)) {
+                        logger.info("Screenshot skip {}: emulator {} not running",
+                                profile.getName(), emulatorNumber);
+                        continue;
+                    }
+                } catch (Exception checkFailed) {
+                    // If the running check itself fails, still attempt capture below.
+                    logger.warn("Screenshot running-check failed for {} ({}): {}",
+                            profile.getName(), emulatorNumber, checkFailed.getMessage());
+                }
+                running.add(profile);
+            }
+
+            if (running.isEmpty()) {
+                // Fall back to enabled profiles so a flaky isRunning() doesn't strand the button.
+                seenEmulators.clear();
+                for (AccountDescriptor profile : targets) {
+                    String emulatorNumber = profile.getEmulatorNumber();
+                    if (emulatorNumber == null || emulatorNumber.isBlank()) {
+                        continue;
+                    }
+                    if (seenEmulators.add(emulatorNumber)) {
+                        running.add(profile);
+                    }
                 }
             }
 
-            if (raw == null || raw.getData() == null || raw.getData().length == 0) {
-                sendMessage(chatId, "❌ Failed to capture screenshot. Is the emulator running?");
+            if (running.isEmpty()) {
+                sendMessage(chatId, "❌ No running emulators found for enabled profiles.");
                 return;
             }
-            byte[] pngBytes = rawImageToPng(raw);
-            if (pngBytes == null) {
-                sendMessage(chatId, "❌ Failed to encode screenshot.");
-                return;
+
+            sendMessage(chatId, "📸 Capturing " + running.size() + " screen"
+                    + (running.size() == 1 ? "" : "s") + "…");
+
+            int sent = 0;
+            List<String> failures = new ArrayList<>();
+
+            for (AccountDescriptor profile : running) {
+                String emulatorNumber = profile.getEmulatorNumber();
+                String label = profile.getName() != null ? profile.getName() : ("emu " + emulatorNumber);
+                if (profile.getCharacterName() != null && !profile.getCharacterName().isBlank()) {
+                    label = label + " · " + profile.getCharacterName();
+                }
+
+                RawImageData raw = null;
+                try {
+                    raw = emuManager.captureScreen(emulatorNumber);
+                } catch (Exception firstAttempt) {
+                    // Do not run coordinated ADB recovery (kill-server) from Telegram screenshots.
+                    // That path has taken down the whole fleet and forced every profile back into
+                    // Initialize. Soft-retry capture once; report failure otherwise.
+                    logger.warn("Screenshot failed for {} ({}): {}",
+                            profile.getName(), emulatorNumber, firstAttempt.getMessage());
+                    try {
+                        Thread.sleep(400);
+                        raw = emuManager.captureScreen(emulatorNumber);
+                    } catch (Exception retryFailed) {
+                        logger.warn("Screenshot soft-retry failed for {}: {}",
+                                profile.getName(), retryFailed.getMessage());
+                        failures.add(label + " — " + retryFailed.getMessage());
+                        continue;
+                    }
+                }
+
+                if (raw == null || raw.getData() == null || raw.getData().length == 0) {
+                    failures.add(label + " — empty capture");
+                    continue;
+                }
+                byte[] pngBytes = rawImageToPng(raw);
+                if (pngBytes == null) {
+                    failures.add(label + " — encode failed");
+                    continue;
+                }
+                if (sendPhoto(chatId, pngBytes, "📸 " + label)) {
+                    sent++;
+                } else {
+                    failures.add(label + " — Telegram send failed");
+                }
             }
-            sendPhoto(chatId, pngBytes);
+
+            if (sent == 0 && !failures.isEmpty()) {
+                sendMessage(chatId, "❌ Screenshot failed for all profiles:\n• "
+                        + String.join("\n• ", failures));
+            } else if (!failures.isEmpty()) {
+                sendMessage(chatId, "✅ Sent " + sent + "/" + running.size()
+                        + " screenshots.\n⚠️ Skipped:\n• " + String.join("\n• ", failures));
+            }
         } catch (Exception e) {
             logger.error("TelegramBotService: screenshot failed: {}", e.getMessage());
             sendMessage(chatId, "❌ Screenshot error: " + e.getMessage());
@@ -445,15 +538,26 @@ public class TelegramBotService implements BotStateListener {
         }
     }
 
-    private void sendPhoto(long chatId, byte[] pngBytes) {
+    private boolean sendPhoto(long chatId, byte[] pngBytes) {
+        return sendPhoto(chatId, pngBytes, null);
+    }
+
+    private boolean sendPhoto(long chatId, byte[] pngBytes, String caption) {
         try {
             String boundary = "TelegramBotBoundary" + System.currentTimeMillis();
-            byte[] header = ("--" + boundary + "\r\n"
-                    + "Content-Disposition: form-data; name=\"chat_id\"\r\n\r\n"
-                    + chatId + "\r\n"
-                    + "--" + boundary + "\r\n"
-                    + "Content-Disposition: form-data; name=\"photo\"; filename=\"screenshot.png\"\r\n"
-                    + "Content-Type: image/png\r\n\r\n").getBytes(StandardCharsets.UTF_8);
+            StringBuilder headerBuilder = new StringBuilder();
+            headerBuilder.append("--").append(boundary).append("\r\n")
+                    .append("Content-Disposition: form-data; name=\"chat_id\"\r\n\r\n")
+                    .append(chatId).append("\r\n");
+            if (caption != null && !caption.isBlank()) {
+                headerBuilder.append("--").append(boundary).append("\r\n")
+                        .append("Content-Disposition: form-data; name=\"caption\"\r\n\r\n")
+                        .append(caption).append("\r\n");
+            }
+            headerBuilder.append("--").append(boundary).append("\r\n")
+                    .append("Content-Disposition: form-data; name=\"photo\"; filename=\"screenshot.png\"\r\n")
+                    .append("Content-Type: image/png\r\n\r\n");
+            byte[] header = headerBuilder.toString().getBytes(StandardCharsets.UTF_8);
             byte[] footer = ("\r\n--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8);
             byte[] body = new byte[header.length + pngBytes.length + footer.length];
             System.arraycopy(header, 0, body, 0, header.length);
@@ -469,9 +573,12 @@ public class TelegramBotService implements BotStateListener {
             if (response.statusCode() != 200) {
                 logger.warn("TelegramBotService: sendPhoto HTTP {}: {}", response.statusCode(), response.body());
                 sendMessage(chatId, "❌ Telegram rejected the photo (HTTP " + response.statusCode() + ")");
+                return false;
             }
+            return true;
         } catch (Exception e) {
             logger.error("TelegramBotService: failed to send photo: {}", e.getMessage());
+            return false;
         }
     }
 
@@ -489,8 +596,12 @@ public class TelegramBotService implements BotStateListener {
             ArrayNode row1 = objectMapper.createArrayNode();
             row1.add(objectMapper.createObjectNode().put("text", "📸 SCREENSHOT"));
             row1.add(objectMapper.createObjectNode().put("text", "📋 QUEUE"));
-            row1.add(objectMapper.createObjectNode().put("text", "📈 STATS"));
             keyboard.add(row1);
+
+            ArrayNode rowStats = objectMapper.createArrayNode();
+            rowStats.add(objectMapper.createObjectNode().put("text", "📚 ALL STATS"));
+            rowStats.add(objectMapper.createObjectNode().put("text", "📊 DAILY STATS"));
+            keyboard.add(rowStats);
 
             ArrayNode row2 = objectMapper.createArrayNode();
             row2.add(objectMapper.createObjectNode().put("text", "▶️ START BOT"));
@@ -869,6 +980,15 @@ public class TelegramBotService implements BotStateListener {
                     }
                     handleProfileToggleCallback(callbackId, chatId, messageId, Long.parseLong(parts[1]));
                 }
+                case "emu_close" -> {
+                    if (parts.length < 2) {
+                        answerCallbackQuery(callbackId, "");
+                        return;
+                    }
+                    handleCloseOneEmuCallback(callbackId, chatId, messageId, parts[1]);
+                }
+                case "emu_close_unused" -> handleCloseUnusedEmusCallback(callbackId, chatId, messageId);
+                case "emu_close_all" -> handleCloseAllEmusCallback(callbackId, chatId, messageId);
                 case "log_dl" -> {
                     answerCallbackQuery(callbackId, "📥 Downloading...");
                     sendDocument(chatId, currentLogPath().toString());
@@ -1086,40 +1206,80 @@ public class TelegramBotService implements BotStateListener {
 
     private void handleStatsCommand(long chatId) {
         try {
-            List<AccountDescriptor> profiles = ProfileService.obtain().fetchAllAccounts();
-            if (profiles == null || profiles.isEmpty()) {
-                sendMessage(chatId, "❌ No profiles configured.");
+            List<StatisticsService.ProfileStatsSlice> slices = collectEnabledStatsSlices();
+            if (slices.isEmpty()) {
+                sendMessage(chatId, "❌ No enabled profiles configured.");
                 return;
             }
-            StringBuilder sb = new StringBuilder();
-            sb.append("📈 *Bot Statistics*\n");
-            sb.append("━━━━━━━━━━━━━━━━━━━━━━\n\n");
-            for (AccountDescriptor p : profiles) {
-                if (!p.getEnabled())
-                    continue;
-                sb.append("✨ *").append(escV2(p.getName())).append("*\n");
-                if (p.getCharacterName() != null && !p.getCharacterName().isEmpty()) {
-                    sb.append("👤 _").append(escV2(p.getCharacterName())).append("_\n");
-                }
-
-                dev.frostguard.api.domain.ProfilesData stats = StatisticsService.obtain().loadMetrics(p);
-                if (stats != null && stats.getCustomCounters() != null && !stats.getCustomCounters().isEmpty()) {
-                    sb.append("\n📊 *Activity:*\n");
-                    for (java.util.Map.Entry<String, Integer> entry : stats.getCustomCounters().entrySet()) {
-                        sb.append("  ▫️ *").append(escV2(entry.getKey())).append("*: `")
-                                .append(String.valueOf(entry.getValue())).append("`\n");
-                    }
-                }
-                sb.append("\n━━━━━━━━━━━━━━━━━━━━━━\n\n");
-            }
-            if (sb.toString().endsWith("\n\n━━━━━━━━━━━━━━━━━━━━━━\n\n")) {
-                sb.setLength(sb.length() - 25);
-            }
-            sendOrEditMessage(chatId, -1L, sb.toString(), null, "MarkdownV2");
+            String body = StatisticsService.obtain().buildTelegramAllTimeStatsBody(slices);
+            sendStatsMarkdownChunks(chatId, body);
         } catch (Exception e) {
             logger.error("handleStatsCommand failed: {}", e.getMessage());
             sendMessage(chatId, "❌ Error retrieving stats.");
         }
+    }
+
+    private void handleDailyStatsCommand(long chatId) {
+        try {
+            List<StatisticsService.ProfileStatsSlice> slices = collectEnabledStatsSlices();
+            if (slices.isEmpty()) {
+                sendMessage(chatId, "❌ No enabled profiles configured.");
+                return;
+            }
+            String body = StatisticsService.obtain().buildTelegramDailyStatsBody(slices);
+            sendStatsMarkdownChunks(chatId, body);
+        } catch (Exception e) {
+            logger.error("handleDailyStatsCommand failed: {}", e.getMessage());
+            sendMessage(chatId, "❌ Error retrieving daily stats.");
+        }
+    }
+
+    private void sendStatsMarkdownChunks(long chatId, String body) {
+        List<String> chunks = StatisticsService.obtain().splitTelegramBodies(body);
+        for (String chunk : chunks) {
+            sendOrEditMessage(chatId, -1L, chunk, null, "MarkdownV2");
+        }
+    }
+
+    private List<StatisticsService.ProfileStatsSlice> collectEnabledStatsSlices() {
+        List<AccountDescriptor> profiles = ProfileService.obtain().fetchAllAccounts();
+        List<StatisticsService.ProfileStatsSlice> slices = new ArrayList<>();
+        if (profiles == null) {
+            return slices;
+        }
+        for (AccountDescriptor profile : profiles) {
+            if (!Boolean.TRUE.equals(profile.getEnabled())) {
+                continue;
+            }
+            String label = profile.getName();
+            if (profile.getCharacterName() != null && !profile.getCharacterName().isBlank()) {
+                label = profile.getName() + " · " + profile.getCharacterName();
+            }
+            slices.add(new StatisticsService.ProfileStatsSlice(
+                    label,
+                    StatisticsService.obtain().loadMetrics(profile),
+                    countOverdueTasksForStats(profile.getId())));
+        }
+        return slices;
+    }
+
+    private int countOverdueTasksForStats(long profileId) {
+        int overdue = 0;
+        LocalDateTime now = LocalDateTime.now();
+        for (TpDailyTaskEnum task : TpDailyTaskEnum.values()) {
+            if (!isStandardQueueTask(task)) {
+                continue;
+            }
+            TaskStateData state = TaskManagementService.shared().lookupTaskState(profileId, task.getId());
+            if (state == null || state.isExecuting()) {
+                continue;
+            }
+            LocalDateTime next = state.getNextExecutionTime();
+            if (next != null && next.isBefore(now)) {
+                overdue++;
+            }
+        }
+        return overdue;
     }
 
     private void handleProfilesCommand(long chatId, long messageId) {
@@ -1166,11 +1326,283 @@ public class TelegramBotService implements BotStateListener {
             answerCallbackQuery(callbackId, "❌ Profile not found");
             return;
         }
-        profile.setEnabled(!profile.getEnabled());
+        boolean wasEnabled = Boolean.TRUE.equals(profile.getEnabled());
+        profile.setEnabled(!wasEnabled);
         ProfileService.obtain().persistAccount(profile);
+        if (wasEnabled && !Boolean.TRUE.equals(profile.getEnabled())) {
+            closeEmulatorIfNoEnabledPeer(profile.getEmulatorNumber());
+        }
         answerCallbackQuery(callbackId,
-                "✅ " + profile.getName() + " " + (profile.getEnabled() ? "enabled" : "disabled"));
+                "✅ " + profile.getName() + " "
+                        + (Boolean.TRUE.equals(profile.getEnabled()) ? "enabled" : "disabled"));
         handleProfilesCommand(chatId, messageId);
+    }
+
+    /**
+     * Quit an emulator index when no enabled profile still maps to it.
+     * Soft-fails so a wedged LDPlayer CLI cannot block the Telegram toggle path.
+     */
+    private void closeEmulatorIfNoEnabledPeer(String emulatorNumber) {
+        if (emulatorNumber == null || emulatorNumber.isBlank()) {
+            return;
+        }
+        List<AccountDescriptor> profiles = ProfileService.obtain().fetchAllAccounts();
+        if (!unusedEmulatorIndexes(profiles).contains(emulatorNumber.trim())) {
+            return;
+        }
+        try {
+            EmulatorController.getInstance().closeEmulator(emulatorNumber.trim());
+            logger.info("Closed unused emulator {} after profile disable", emulatorNumber);
+        } catch (Exception ex) {
+            logger.warn("Failed to close unused emulator {} after disable: {}",
+                    emulatorNumber, ex.getMessage());
+        }
+    }
+
+    private void handleCloseEmusCommand(long chatId, long messageId) {
+        try {
+            List<AccountDescriptor> profiles = ProfileService.obtain().fetchAllAccounts();
+            if (profiles == null || profiles.isEmpty()) {
+                sendMessage(chatId, "❌ No profiles configured.");
+                return;
+            }
+            Map<String, List<AccountDescriptor>> byEmu = profilesByEmulator(profiles);
+            if (byEmu.isEmpty()) {
+                sendMessage(chatId, "❌ No emulator indexes configured on profiles.");
+                return;
+            }
+            Set<String> unused = unusedEmulatorIndexes(profiles);
+            EmulatorController emu = EmulatorController.getInstance();
+            StringBuilder sb = new StringBuilder();
+            sb.append("🔌 *Close Emulators*\n");
+            sb.append("━━━━━━━━━━━━━━━━━━━━━━\n");
+            sb.append("💡 _Tap a row to close that slot\\._\n");
+            sb.append("_Close unused \\= disabled\\-only slots\\._\n");
+            sb.append("_Close all \\= every configured slot\\._\n\n");
+            ArrayNode kb = objectMapper.createArrayNode();
+            for (Map.Entry<String, List<AccountDescriptor>> entry : byEmu.entrySet()) {
+                String index = entry.getKey();
+                List<AccountDescriptor> owners = entry.getValue();
+                boolean running = false;
+                try {
+                    running = emu.isRunning(index);
+                } catch (Exception ex) {
+                    logger.warn("isRunning failed for emu {}: {}", index, ex.getMessage());
+                }
+                boolean isUnused = unused.contains(index);
+                String names = owners.stream()
+                        .map(p -> p.getName() + (Boolean.TRUE.equals(p.getEnabled()) ? " ON" : " OFF"))
+                        .collect(Collectors.joining(", "));
+                sb.append(running ? "🟢" : "⚪").append(" `").append(escV2(index)).append("`");
+                if (isUnused) {
+                    sb.append(" · unused");
+                }
+                sb.append("\n      ").append(escV2(names)).append("\n\n");
+                ArrayNode row = objectMapper.createArrayNode();
+                row.add(objectMapper.createObjectNode()
+                        .put("text", "Close " + index + (running ? " 🟢" : " ⚪"))
+                        .put("callback_data", "emu_close:" + index));
+                kb.add(row);
+            }
+            ArrayNode bulk = objectMapper.createArrayNode();
+            bulk.add(objectMapper.createObjectNode()
+                    .put("text", "Close unused (" + unused.size() + ")")
+                    .put("callback_data", "emu_close_unused"));
+            bulk.add(objectMapper.createObjectNode()
+                    .put("text", "Close all")
+                    .put("callback_data", "emu_close_all"));
+            kb.add(bulk);
+            ObjectNode markup = objectMapper.createObjectNode();
+            markup.set("inline_keyboard", kb);
+            sendOrEditMessage(chatId, messageId, sb.toString(), markup, "MarkdownV2");
+        } catch (Exception e) {
+            logger.error("handleCloseEmusCommand failed: {}", e.getMessage());
+            sendMessage(chatId, "❌ Close-emus panel failed: " + e.getMessage());
+        }
+    }
+
+    private void handleCloseOneEmuCallback(String callbackId, long chatId, long messageId, String index) {
+        String result = closeEmulatorIndex(index);
+        answerCallbackQuery(callbackId, result);
+        handleCloseEmusCommand(chatId, messageId);
+    }
+
+    private void handleCloseUnusedEmusCallback(String callbackId, long chatId, long messageId) {
+        List<AccountDescriptor> profiles = ProfileService.obtain().fetchAllAccounts();
+        Set<String> unused = unusedEmulatorIndexes(profiles);
+        String summary = closeEmulatorIndexes(unused);
+        answerCallbackQuery(callbackId, summary);
+        sendMessage(chatId, "🔌 Close unused: " + summary);
+        handleCloseEmusCommand(chatId, messageId);
+    }
+
+    private void handleCloseAllEmusCallback(String callbackId, long chatId, long messageId) {
+        List<AccountDescriptor> profiles = ProfileService.obtain().fetchAllAccounts();
+        Set<String> all = allConfiguredEmulatorIndexes(profiles);
+        String summary = closeEmulatorIndexes(all);
+        answerCallbackQuery(callbackId, summary);
+        sendMessage(chatId, "🔌 Close all: " + summary);
+        handleCloseEmusCommand(chatId, messageId);
+    }
+
+    private String closeEmulatorIndexes(Set<String> indexes) {
+        if (indexes == null || indexes.isEmpty()) {
+            return "Nothing to close";
+        }
+        int closed = 0;
+        int already = 0;
+        int failed = 0;
+        for (String index : indexes) {
+            String outcome = closeEmulatorIndex(index);
+            if (outcome.startsWith("Closed")) {
+                closed++;
+            } else if (outcome.startsWith("Already")) {
+                already++;
+            } else {
+                failed++;
+            }
+        }
+        return "closed " + closed + ", already stopped " + already + ", failed " + failed;
+    }
+
+    /**
+     * Soft-close one configured emulator index. Returns a short human status for Telegram toasts.
+     */
+    private String closeEmulatorIndex(String index) {
+        if (index == null || index.isBlank()) {
+            return "Bad index";
+        }
+        String trimmed = index.trim();
+        try {
+            EmulatorController emu = EmulatorController.getInstance();
+            boolean wasRunning = false;
+            try {
+                wasRunning = emu.isRunning(trimmed);
+            } catch (Exception ex) {
+                logger.warn("isRunning before close failed for {}: {}", trimmed, ex.getMessage());
+            }
+            if (!wasRunning) {
+                // Still issue quit in case status lied under ADB pressure.
+                try {
+                    emu.closeEmulator(trimmed);
+                } catch (Exception ignored) {
+                }
+                return "Already stopped " + trimmed;
+            }
+            emu.closeEmulator(trimmed);
+            return "Closed " + trimmed;
+        } catch (Exception ex) {
+            logger.warn("closeEmulator failed for {}: {}", trimmed, ex.getMessage());
+            return "Failed " + trimmed;
+        }
+    }
+
+    /** Unique non-blank emulator indexes from every profile (enabled or not). */
+    static Set<String> allConfiguredEmulatorIndexes(List<AccountDescriptor> profiles) {
+        Set<String> indexes = new LinkedHashSet<>();
+        if (profiles == null) {
+            return indexes;
+        }
+        for (AccountDescriptor profile : profiles) {
+            if (profile == null) {
+                continue;
+            }
+            String emu = profile.getEmulatorNumber();
+            if (emu != null && !emu.isBlank()) {
+                indexes.add(emu.trim());
+            }
+        }
+        return indexes;
+    }
+
+    /**
+     * Emulator indexes that appear on at least one profile and have no enabled profile mapped.
+     * Shared slots stay protected while any enabled peer uses them.
+     */
+    static Set<String> unusedEmulatorIndexes(List<AccountDescriptor> profiles) {
+        Set<String> all = allConfiguredEmulatorIndexes(profiles);
+        if (profiles == null || all.isEmpty()) {
+            return all;
+        }
+        Set<String> enabled = new LinkedHashSet<>();
+        for (AccountDescriptor profile : profiles) {
+            if (profile == null || !Boolean.TRUE.equals(profile.getEnabled())) {
+                continue;
+            }
+            String emu = profile.getEmulatorNumber();
+            if (emu != null && !emu.isBlank()) {
+                enabled.add(emu.trim());
+            }
+        }
+        Set<String> unused = new LinkedHashSet<>(all);
+        unused.removeAll(enabled);
+        return unused;
+    }
+
+    static Map<String, List<AccountDescriptor>> profilesByEmulator(List<AccountDescriptor> profiles) {
+        Map<String, List<AccountDescriptor>> byEmu = new LinkedHashMap<>();
+        if (profiles == null) {
+            return byEmu;
+        }
+        for (AccountDescriptor profile : profiles) {
+            if (profile == null) {
+                continue;
+            }
+            String emu = profile.getEmulatorNumber();
+            if (emu == null || emu.isBlank()) {
+                continue;
+            }
+            byEmu.computeIfAbsent(emu.trim(), key -> new ArrayList<>()).add(profile);
+        }
+        return byEmu;
+    }
+
+    private void handleAdbRebootCommand(long chatId) {
+        try {
+            sendMessage(chatId, "🔌 Coordinated ADB recovery — pausing queues, rebooting bridge…");
+            Map<String, String> labelByEmu = adbRecoveryDeviceLabels(
+                    ProfileService.obtain().fetchAllAccounts());
+            EmulatorController emu = EmulatorController.getInstance();
+            boolean healthy = emu.recoverAdbCoordinated("telegram /adbreboot", (emuIndex, ok) -> {
+                String label = labelByEmu.getOrDefault(emuIndex, "emu " + emuIndex);
+                sendMessage(chatId, label + (Boolean.TRUE.equals(ok) ? " ✅" : " ❌"));
+            });
+            AdbRecoveryReport report = emu.lastAdbRecoveryReport();
+            if (healthy) {
+                sendMessage(chatId, "✅ Queues resumed ("
+                        + report.okCount() + "/" + report.totalCount() + " devices ready).");
+            } else if (emu.adbCircuitState() == AdbCircuitBreaker.State.SUSPENDED) {
+                sendMessage(chatId, "🚨 HOST ADB still dead — queues stay paused.\n"
+                        + "Dismiss `adb.exe` error popups on the PC, or reboot the PC, "
+                        + "then retry `/adbreboot`.");
+            } else {
+                sendMessage(chatId, "⚠️ No devices ready — captures suppressed during cooldown.\n"
+                        + "Check host ADB / LDPlayer, then retry `/adbreboot`.");
+            }
+        } catch (Exception e) {
+            logger.error("handleAdbRebootCommand failed", e);
+            sendMessage(chatId, "❌ ADB reboot failed: " + e.getMessage());
+        }
+    }
+
+    /** Emulator slot → profile display name for live `/adbreboot` lines. */
+    static Map<String, String> adbRecoveryDeviceLabels(List<AccountDescriptor> profiles) {
+        Map<String, String> labels = new LinkedHashMap<>();
+        if (profiles == null) {
+            return labels;
+        }
+        for (AccountDescriptor profile : profiles) {
+            if (profile == null || !Boolean.TRUE.equals(profile.getEnabled())) {
+                continue;
+            }
+            String emu = profile.getEmulatorNumber();
+            if (emu == null || emu.isBlank() || labels.containsKey(emu)) {
+                continue;
+            }
+            String name = profile.getName();
+            labels.put(emu, name == null || name.isBlank() ? ("emu " + emu) : name);
+        }
+        return labels;
     }
 
     private void handleRebootCommand(long chatId) {
@@ -1186,21 +1618,15 @@ public class TelegramBotService implements BotStateListener {
             }
             Thread.sleep(1500);
 
-            List<AccountDescriptor> profiles = ProfileService.obtain().fetchAllAccounts();
-            if (profiles != null) {
-                for (AccountDescriptor p : profiles) {
-                    if (p.getEnabled()) {
-                        String emu = p.getEmulatorNumber();
-                        try {
-                            if (emu != null && !emu.trim().isEmpty()) {
-                                EmulatorController.getInstance().closeEmulator(emu);
-                            }
-                        } catch (Exception ex) {
-                            logger.warn("Reboot: Emulator close soft handled: {}", ex.getMessage());
-                        }
-                        Thread.sleep(1000);
-                    }
+            // Close every configured slot (enabled or not) so disabled orphans do not survive reboot.
+            Set<String> emulators = allConfiguredEmulatorIndexes(ProfileService.obtain().fetchAllAccounts());
+            for (String emu : emulators) {
+                try {
+                    EmulatorController.getInstance().closeEmulator(emu);
+                } catch (Exception ex) {
+                    logger.warn("Reboot: Emulator close soft handled for {}: {}", emu, ex.getMessage());
                 }
+                Thread.sleep(1000);
             }
 
             ScheduleService.obtain().launchEngine();

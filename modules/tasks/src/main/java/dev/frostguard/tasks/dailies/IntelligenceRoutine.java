@@ -218,18 +218,21 @@ public IntelligenceRoutine(AccountDescriptor profile, TpDailyTaskEnum tpTask) {
 			}
 		}
 
-		if (!useSmartProcessing || recallGatherTroopsFlow) {
+		if (recallsAllGatherTroops(useSmartProcessing, recallGatherTroopsFlow)) {
 			navigationHelper.ensureCorrectScreenLocation(LaunchPoint.WORLD);
-			logInfo(routineLogIntelligenceLine("Intel gather-priority mode active (smart=" + useSmartProcessing
-					+ ", recall=" + recallGatherTroopsFlow + "). Recalling all gather troops..."));
+			logInfo(routineLogIntelligenceLine("Recall Gather Troops is on (smart=" + useSmartProcessing
+					+ "). Recalling all gather troops..."));
 			recallGatherTroopsFlow();
 			shouldRequeueGatherAfterIntel = true;
 			logInfo(routineLogIntelligenceLine("All gather troops recalled. Proceeding with intel processing."));
 			initiallyIdleMarches = resolveConfiguredIntelMarchesFlow();
 			marchesAvailable = new MarchesAvailable(true, null);
-		} else {
+		} else if (useSmartProcessing) {
 			logInfo(routineLogIntelligenceLine(
 					"Smart processing keeps the Intel screen open; march capacity will be checked at deployment."));
+		} else {
+			logInfo(routineLogIntelligenceLine(
+					"Recall Gather Troops is off. Leaving gather marches in place."));
 		}
 
 		initializeIntelMarchCountersFlow(initiallyIdleMarches);
@@ -1053,6 +1056,13 @@ private void manageRescheduling(boolean anyIntelProcessed, boolean nonBeastIntel
 		logInfo(routineLogIntelligenceLine("Initialized internal Intel march counter: " + intelMarchesRemaining
 				+ "/" + maxIntelMarches + " (Beast/Fire Beast only, mode="
 				+ (useFlag ? "single configured flag" : "parallel without flag") + ")."));
+	}
+
+	static boolean recallsAllGatherTroops(boolean smartProcessing, boolean recallGatherTroops) {
+		if (smartProcessing && !recallGatherTroops) {
+			return false;
+		}
+		return recallGatherTroops;
 	}
 
 	static int resolveIntelMarchCapacity(int configuredMarches, int idleMarches, boolean useFlag) {

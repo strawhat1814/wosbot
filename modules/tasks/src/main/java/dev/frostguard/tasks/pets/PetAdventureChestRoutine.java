@@ -15,6 +15,7 @@ import dev.frostguard.engine.nav.SearchConfigConstants;
 import dev.frostguard.engine.helper.TemplateSearchHelper.SearchConfig;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -42,9 +43,10 @@ import java.util.List;
  * <p>
  * <b>Scheduling Strategy:</b>
  * <ul>
- * <li>After starting chests (attempts remaining): 2 hours (for completion)</li>
- * <li>After exhausting attempts: Next game reset</li>
- * <li>Navigation failure: 15 minutes retry</li>
+ * <li>After a confirmed start: 2 hours, then start any pin that is still idle</li>
+ * <li>No confirmed start after an unverified pin: 15 minute retry, no stamina spend</li>
+ * <li>After exhausting attempts: next game reset</li>
+ * <li>Navigation failure: 15 minute retry</li>
  * </ul>
  * 
  * @author WoS Bot
@@ -83,12 +85,11 @@ public class PetAdventureChestRoutine extends DelayedTask {
 	 */
 	private static final PointData CHEST_CLAIM_POINT = new PointData(370, 800);
 
-	// ========================================================================
-	// RETRY CONSTANTS
-	// ========================================================================
-
-	private static final int NAVIGATION_RETRY_MINUTES = 15;
-	private static final int CHEST_COMPLETION_HOURS = 2;
+	private static final SearchConfig MAP_PROBE = SearchConfig.builder()
+			.withMaxAttempts(1)
+			.withThreshold(90)
+			.withMaxResults(1)
+			.build();
 
 	// ========================================================================
 	// CHEST PRIORITY ORDER
@@ -165,9 +166,7 @@ public class PetAdventureChestRoutine extends DelayedTask {
 		claimCompletedChests();
 		if (observeOnlyVisit()) {
 			clearObserveOnly();
-			logInfo("Re-reading Pet Adventure after an unverified start; Start will not be sent on this visit.");
-			rescheduleForChestCompletion();
-			return;
+			logInfo("Cleared the unverified-start lock so this visit can start every idle chest.");
 		}
 		startAvailableChests();
 	}
@@ -278,117 +277,103 @@ public class PetAdventureChestRoutine extends DelayedTask {
 	// ========================================================================
 
 	/**
-	 * Starts new adventure chests until no more are available or attempts
-	 * exhausted.
-	 * 
-	 * <p>
-	 * <b>Strategy:</b>
-	 * <ul>
-	 * <li>Searches for chests in priority order (Red â†’ Purple â†’ Blue)</li>
-	 * <li>Starts each found chest immediately</li>
-	 * <li>Repeats search after each start (UI updates with new chests)</li>
-	 * <li>Stops when no chests found or attempts exhausted</li>
-	 * <li>Has safety limit to prevent infinite loops</li>
-	 * </ul>
-	 * 
-	 * <p>
-	 * <b>Exit conditions:</b>
-	 * <ol>
-	 * <li>No more chests found on screen</li>
-	 * <li>Daily attempts exhausted (detected by template)</li>
-	 * <li>Safety iteration limit reached</li>
-	 * </ol>
+	 * Starts every idle pin once during this visit. An unverified pin is
+	 * skipped so the other idle pins can still be started. A confirmed pin
+	 * is skipped too, so a countdown that has not appeared yet is not tapped
+	 * again.
 	 */
 	private void startAvailableChests() {
 		logDebug("Starting available adventure chests");
-
+		VisitPass pass = new VisitPass();
 		int iterationCount = 0;
-		boolean foundAnyChest;
 
-		do {
-			foundAnyChest = false;
+		while (true) {
 			iterationCount++;
-
-			// Safety check to prevent infinite loops
 			if (iterationCount > MAX_CHEST_START_ITERATIONS) {
-				scheduleUnknownChestRetry("chest scan reached its iteration limit", "iteration-limit");
-				return;
+				pass.noteUnknown("chest scan reached its iteration limit");
+				break;
 			}
 
-			// Try each chest type in priority order
-			for (TemplatesEnum chestTemplate : CHEST_PRIORITY) {
-				ChestStartResult result = attemptToStartChest(chestTemplate);
+			IdleChest next = findNextIdleChest(pass.skippedPins);
+			if (next == null) {
+				break;
+			}
 
-				if (result == ChestStartResult.STARTED) {
-					foundAnyChest = true;
-					break;
-				} else if (result == ChestStartResult.NO_ATTEMPTS) {
-					return; // Task already rescheduled
-				} else if (result == ChestStartResult.UNKNOWN) {
-					return;
+			ChestAttempt attempt = startIdleChest(next.template, next.chest, pass);
+			switch (attempt.kind) {
+				case STARTED -> {
+					pass.confirmedStarts++;
+					pass.skippedPins.add(next.chest.getPoint());
 				}
+				case SELECT_MISSING -> {
+					pass.noteUnknown(attempt.detail);
+					pass.skippedPins.add(next.chest.getPoint());
+					if (!adventureMapVisible() && !dismissToAdventureMap()) {
+						scheduleUnknownChestRetry(
+								"adventure map was not visible after a missing Select control",
+								"select-control");
+						return;
+					}
+				}
+				case UNVERIFIED_START, PANEL_UNKNOWN -> {
+					pass.noteUnknown(attempt.detail);
+					pass.skippedPins.add(next.chest.getPoint());
+					if (!dismissToAdventureMap()) {
+						scheduleUnknownChestRetry(
+								"adventure map was not visible after an unverified chest action",
+								"start-outcome");
+						return;
+					}
+				}
+				case NO_ATTEMPTS -> pass.attemptsExhausted = true;
 			}
 
-		} while (foundAnyChest);
+			if (pass.attemptsExhausted) {
+				break;
+			}
+		}
 
-		// No more chests found - reschedule for later
-		logInfo("No more available chests found. Rescheduling for chest completion check");
-		rescheduleForChestCompletion();
+		scheduleAfterChestPass(pass);
 	}
 
-	/**
-	 * Attempts to start a single chest adventure.
-	 * 
-	 * <p>
-	 * <b>Process:</b>
-	 * <ol>
-	 * <li>Search for chest of specified type (with retries)</li>
-	 * <li>Tap chest to open detail screen</li>
-	 * <li>Tap Select button</li>
-	 * <li>Check for Start button vs No Attempts message</li>
-	 * <li>Skip pins whose countdown pill is already running</li>
-	 * <li>If Start remains visible, retry shortly without recording a start</li>
-	 * <li>If Start disappears and In Adventure is present, count the start and keep scanning</li>
-	 * <li>If Start disappears without In Adventure, re-read on the next visit and do not tap Start again</li>
-	 * <li>If No Attempts: reschedule and exit task</li>
-	 * </ol>
-	 * 
-	 * @param chestTemplate The chest template to search for
-	 * @return STARTED, NOT_FOUND, NO_ATTEMPTS, or UNKNOWN
-	 */
-	private ChestStartResult attemptToStartChest(TemplatesEnum chestTemplate) {
-		logDebug("Searching for " + chestTemplate);
-
-		List<ImageSearchResultData> chests = templateSearchHelper.locateAllPatterns(
-				chestTemplate,
-				CHEST_CANDIDATES);
+	private IdleChest findNextIdleChest(List<PointData> skippedPins) {
 		List<ImageSearchResultData> timers = templateSearchHelper.locateAllPatterns(
 				TemplatesEnum.PETS_CHEST_ADVENTURE_TIMER,
 				ADVENTURE_TIMERS);
 
-		if (chests == null || chests.isEmpty()) {
-			return ChestStartResult.NOT_FOUND;
-		}
-
-		for (ImageSearchResultData chestResult : chests) {
-			if (!chestResult.isFound()) {
+		for (TemplatesEnum chestTemplate : CHEST_PRIORITY) {
+			logDebug("Searching for " + chestTemplate);
+			List<ImageSearchResultData> chests = templateSearchHelper.locateAllPatterns(
+					chestTemplate,
+					CHEST_CANDIDATES);
+			if (chests == null || chests.isEmpty()) {
 				continue;
 			}
-			if (PetAdventureDecisions.occupiedByTimer(chestResult.getPoint(), timers)) {
-				logInfo("Skipping " + chestTemplate + " already in adventure at "
-						+ chestResult.getPoint());
-				continue;
-			}
-			return startIdleChest(chestTemplate, chestResult);
-		}
 
-		return ChestStartResult.NOT_FOUND;
+			for (ImageSearchResultData chestResult : chests) {
+				PointData pin = chestResult.getPoint();
+				if (!chestResult.isFound() || pin == null) {
+					continue;
+				}
+				if (PetAdventureDecisions.occupiedByTimer(pin, timers)) {
+					logInfo("Skipping " + chestTemplate + " already in adventure at " + pin);
+					continue;
+				}
+				if (PetAdventureDecisions.alreadyAttempted(pin, skippedPins)) {
+					logDebug("Skipping " + chestTemplate + " already attempted at " + pin);
+					continue;
+				}
+				return new IdleChest(chestTemplate, chestResult);
+			}
+		}
+		return null;
 	}
 
-	private ChestStartResult startIdleChest(TemplatesEnum chestTemplate, ImageSearchResultData chestResult) {
-		logInfo("Found " + chestTemplate + ". Attempting to start adventure");
+	private ChestAttempt startIdleChest(TemplatesEnum chestTemplate, ImageSearchResultData chestResult, VisitPass pass) {
+		PointData pin = chestResult.getPoint();
+		logInfo("Found " + chestTemplate + " at " + pin + ". Attempting to start adventure");
 
-		tapInside(chestResult.getPoint(), chestResult.getPoint());
+		tapInside(pin, pin);
 		sleepTask(500);
 
 		ImageSearchResultData selectButton = templateSearchHelper.locatePattern(
@@ -396,9 +381,10 @@ public class PetAdventureChestRoutine extends DelayedTask {
 				SearchConfigConstants.DEFAULT_SINGLE);
 
 		if (!selectButton.isFound()) {
-			scheduleUnknownChestRetry("Select control was missing for " + chestTemplate, "select-control");
-			pressBack();
-			return ChestStartResult.UNKNOWN;
+			captureUnknownOnce(pass, "select-control");
+			String detail = "Select control was missing for " + chestTemplate + " at " + pin;
+			logInfo(detail + ". Skipping that pin for this visit.");
+			return ChestAttempt.selectMissing(detail);
 		}
 
 		tapInside(selectButton);
@@ -415,34 +401,28 @@ public class PetAdventureChestRoutine extends DelayedTask {
 					TemplatesEnum.PETS_CHEST_START,
 					SearchConfigConstants.DEFAULT_SINGLE);
 			if (startStillVisible.isFound()) {
-				scheduleUnknownChestRetry("Start control remained visible after the tap", "start-unconfirmed");
-				pressBack();
-				return ChestStartResult.UNKNOWN;
+				captureUnknownOnce(pass, "start-unconfirmed");
+				String detail = "Start control remained visible after the tap at " + pin;
+				logInfo(detail + ". Skipping that pin for this visit.");
+				return ChestAttempt.panelUnknown(detail);
 			}
 
 			ImageSearchResultData inAdventure = templateSearchHelper.locatePattern(
 					TemplatesEnum.PETS_CHEST_IN_ADVENTURE,
 					SearchConfigConstants.DEFAULT_SINGLE);
-			if (PetAdventureDecisions.inAdventureOverlay(inAdventure)) {
+			if (PetAdventureDecisions.recordsStaminaSpend(inAdventure)) {
 				staminaHelper.subtractStamina(STAMINA_PER_CHEST, false);
 				logInfo("Started " + chestTemplate + " adventure (consumed "
 						+ STAMINA_PER_CHEST + " stamina)");
 				pressBack();
 				sleepTask(500);
-				return ChestStartResult.STARTED;
+				return ChestAttempt.started();
 			}
 
-			markObserveOnly();
-			LocalDateTime nextCheck = unverifiedStartRecheck(LocalDateTime.now());
-			String snapshot = TaskDiagnosticSnapshots.capture(
-					emuManager, EMULATOR_NUMBER, "petadventurechest", "start-outcome");
-			logWarning("Start tap was sent but the adventure state was not confirmed; "
-					+ "the next visit only re-reads. Next check at "
-					+ nextCheck.format(DATETIME_FORMATTER) + "; " + snapshot + ".");
-			reschedule(nextCheck);
-			pressBack();
-			sleepTask(500);
-			return ChestStartResult.UNKNOWN;
+			captureUnknownOnce(pass, "start-outcome");
+			String detail = "Start tap at " + pin + " did not show In Adventure";
+			logInfo(detail + ". Skipping that pin for this visit.");
+			return ChestAttempt.unverified(detail);
 		}
 
 		ImageSearchResultData noAttemptsMessage = templateSearchHelper.locatePattern(
@@ -450,30 +430,104 @@ public class PetAdventureChestRoutine extends DelayedTask {
 				SearchConfigConstants.DEFAULT_SINGLE);
 
 		if (noAttemptsMessage.isFound()) {
-			logInfo("No more adventure attempts available. Rescheduling for next game reset");
-			rescheduleToGameReset();
-			return ChestStartResult.NO_ATTEMPTS;
+			logInfo("No more adventure attempts available");
+			return ChestAttempt.noAttempts();
 		}
 
-		logWarning("Could not determine chest start status for " + chestTemplate);
-		scheduleUnknownChestRetry("neither Start nor No Attempts was detected", "start-status");
-		pressBack();
-		return ChestStartResult.UNKNOWN;
+		captureUnknownOnce(pass, "start-status");
+		String detail = "neither Start nor No Attempts was detected for " + chestTemplate + " at " + pin;
+		logInfo(detail + ". Skipping that pin for this visit.");
+		return ChestAttempt.panelUnknown(detail);
+	}
+
+	/**
+	 * One back closes the start overlay. A second back closes a sheet that
+	 * was left open, such as the stamina Obtain more panel, and returns to
+	 * the adventure map. Further backs would leave Pet Adventure.
+	 */
+	private boolean dismissToAdventureMap() {
+		for (int attempt = 0; attempt < 2; attempt++) {
+			if (adventureMapVisible()) {
+				return true;
+			}
+			pressBack();
+			sleepTask(500);
+		}
+		return adventureMapVisible();
+	}
+
+	private boolean adventureMapVisible() {
+		if (hasAnyMatch(TemplatesEnum.PETS_CHEST_ADVENTURE_TIMER, ADVENTURE_TIMERS)) {
+			return true;
+		}
+		for (TemplatesEnum chestTemplate : CHEST_PRIORITY) {
+			if (hasAnyMatch(chestTemplate, MAP_PROBE)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private boolean hasAnyMatch(TemplatesEnum template, SearchConfig config) {
+		List<ImageSearchResultData> hits = templateSearchHelper.locateAllPatterns(template, config);
+		if (hits == null) {
+			return false;
+		}
+		for (ImageSearchResultData hit : hits) {
+			if (hit != null && hit.isFound()) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private void captureUnknownOnce(VisitPass pass, String type) {
+		if (pass.snapshot != null) {
+			return;
+		}
+		pass.snapshot = TaskDiagnosticSnapshots.capture(
+				emuManager, EMULATOR_NUMBER, "petadventurechest", type);
 	}
 
 	// ========================================================================
 	// RESCHEDULING METHODS
 	// ========================================================================
 
-	/**
-	 * Reschedules the task for chest completion check (2 hours).
-	 * 
-	 * <p>
-	 * Used when chests have been started and we need to wait for them
-	 * to complete before claiming rewards.
-	 */
+	private void scheduleAfterChestPass(VisitPass pass) {
+		PetAdventureDecisions.PetAdventureNextVisit visit = PetAdventureDecisions.nextVisit(
+				pass.confirmedStarts, pass.unknownPin, pass.attemptsExhausted);
+		switch (visit) {
+			case ATTEMPTS_RESET -> rescheduleToGameReset();
+			case UNKNOWN_RETRY -> scheduleUnknownRetry(pass);
+			case COMPLETION_CHECK -> {
+				if (pass.confirmedStarts > 0) {
+					logInfo("Started " + pass.confirmedStarts + " adventure(s).");
+					if (pass.unknownPin) {
+						logInfo("Skipped unverified pins this visit: " + pass.unknownDetail);
+					}
+				} else {
+					logInfo("No more available chests found. Rescheduling for chest completion check");
+				}
+				rescheduleForChestCompletion();
+			}
+		}
+	}
+
+	private void scheduleUnknownRetry(VisitPass pass) {
+		LocalDateTime retryTime = PetAdventureDecisions.unknownRetryAt(LocalDateTime.now());
+		String snapshot = pass.snapshot;
+		if (snapshot == null) {
+			snapshot = TaskDiagnosticSnapshots.capture(
+					emuManager, EMULATOR_NUMBER, "petadventurechest", "iteration-limit");
+		}
+		String reason = pass.unknownDetail == null ? "chest scan did not confirm a start" : pass.unknownDetail;
+		logWarning("Pet Adventure outcome is unknown: " + reason + "; retrying at "
+				+ retryTime.format(DATETIME_FORMATTER) + "; " + snapshot + ".");
+		reschedule(retryTime);
+	}
+
 	private void rescheduleForChestCompletion() {
-		LocalDateTime nextCheck = LocalDateTime.now().plusHours(CHEST_COMPLETION_HOURS);
+		LocalDateTime nextCheck = PetAdventureDecisions.completionCheckAt(LocalDateTime.now());
 		reschedule(nextCheck);
 		logInfo("Rescheduled for chest completion check at " +
 				nextCheck.format(TIME_FORMATTER));
@@ -499,13 +553,9 @@ public class PetAdventureChestRoutine extends DelayedTask {
 	 * Used when navigation to Pet Adventures fails.
 	 */
 	private void rescheduleForNavigationRetry() {
-		LocalDateTime retryTime = LocalDateTime.now().plusMinutes(NAVIGATION_RETRY_MINUTES);
+		LocalDateTime retryTime = PetAdventureDecisions.unknownRetryAt(LocalDateTime.now());
 		reschedule(retryTime);
 		logWarning("Navigation failed. Retrying at " + retryTime.format(TIME_FORMATTER));
-	}
-
-	static LocalDateTime unverifiedStartRecheck(LocalDateTime now) {
-		return now.plusHours(CHEST_COMPLETION_HOURS);
 	}
 
 	private boolean observeOnlyVisit() {
@@ -513,40 +563,73 @@ public class PetAdventureChestRoutine extends DelayedTask {
 				ConfigurationKeyEnum.PET_ADVENTURE_OBSERVE_ONLY_BOOL, Boolean.class));
 	}
 
-	private void markObserveOnly() {
-		writeProfileSetting(ConfigurationKeyEnum.PET_ADVENTURE_OBSERVE_ONLY_BOOL, true);
-	}
-
 	private void clearObserveOnly() {
 		writeProfileSetting(ConfigurationKeyEnum.PET_ADVENTURE_OBSERVE_ONLY_BOOL, false);
 	}
 
 	private void scheduleUnknownChestRetry(String reason, String type) {
-		LocalDateTime retryTime = LocalDateTime.now().plusMinutes(NAVIGATION_RETRY_MINUTES);
+		LocalDateTime retryTime = PetAdventureDecisions.unknownRetryAt(LocalDateTime.now());
 		String snapshot = TaskDiagnosticSnapshots.capture(emuManager, EMULATOR_NUMBER, "petadventurechest", type);
 		logWarning("Pet Adventure outcome is unknown: " + reason + "; retrying at "
 				+ retryTime.format(DATETIME_FORMATTER) + "; " + snapshot + ".");
 		reschedule(retryTime);
 	}
 
-	// ========================================================================
-	// HELPER ENUMS
-	// ========================================================================
+	private static final class VisitPass {
+		private final List<PointData> skippedPins = new ArrayList<>();
+		private int confirmedStarts;
+		private boolean unknownPin;
+		private boolean attemptsExhausted;
+		private String unknownDetail;
+		private String snapshot;
 
-	/**
-	 * Result of attempting to start a chest adventure.
-	 */
-	private enum ChestStartResult {
-		/** Chest was idle and In Adventure confirmed the start. */
+		private void noteUnknown(String detail) {
+			unknownPin = true;
+			if (detail == null || detail.isBlank()) {
+				return;
+			}
+			unknownDetail = unknownDetail == null ? detail : unknownDetail + "; " + detail;
+		}
+	}
+
+	private record IdleChest(TemplatesEnum template, ImageSearchResultData chest) {
+	}
+
+	private enum ChestStartKind {
 		STARTED,
+		SELECT_MISSING,
+		UNVERIFIED_START,
+		PANEL_UNKNOWN,
+		NO_ATTEMPTS
+	}
 
-		/** No daily attempts remaining (task rescheduled) */
-		NO_ATTEMPTS,
+	private static final class ChestAttempt {
+		private final ChestStartKind kind;
+		private final String detail;
 
-		/** Chest not found or could not be started */
-		NOT_FOUND,
+		private ChestAttempt(ChestStartKind kind, String detail) {
+			this.kind = kind;
+			this.detail = detail;
+		}
 
-		/** The screen or action outcome could not be verified. */
-		UNKNOWN
+		private static ChestAttempt started() {
+			return new ChestAttempt(ChestStartKind.STARTED, null);
+		}
+
+		private static ChestAttempt selectMissing(String detail) {
+			return new ChestAttempt(ChestStartKind.SELECT_MISSING, detail);
+		}
+
+		private static ChestAttempt unverified(String detail) {
+			return new ChestAttempt(ChestStartKind.UNVERIFIED_START, detail);
+		}
+
+		private static ChestAttempt panelUnknown(String detail) {
+			return new ChestAttempt(ChestStartKind.PANEL_UNKNOWN, detail);
+		}
+
+		private static ChestAttempt noAttempts() {
+			return new ChestAttempt(ChestStartKind.NO_ATTEMPTS, null);
+		}
 	}
 }

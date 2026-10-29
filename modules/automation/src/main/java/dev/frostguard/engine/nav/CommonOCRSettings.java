@@ -35,9 +35,24 @@ public final class CommonOCRSettings {
                     .allowedGlyphs(LATIN_LETTERS)
                     .build();
 
+    // System ANR dialog text is dark on a white card; English only for this recovery path.
+    public static final OcrSettingsData ANR_DIALOG_SETTINGS =
+            OcrSettingsData.builder()
+                    .textLayout(TextLayout.SPARSE)
+                    .allowedGlyphs(LATIN_LETTERS)
+                    .build();
+
     // stamina fraction: "123/500" style
     public static final OcrSettingsData STAMINA_FRACTION_SETTINGS =
             buildConfig("0123456789/", true, 255, 255, 255, TextLayout.SINGLE_LINE);
+
+    // City/World stamina pill: white digits on green. Colour isolation drops the middle
+    // stroke of "2", the same way it drops a slender "1", so the glyphs stay raw.
+    public static final OcrSettingsData STAMINA_HUD_SETTINGS =
+            OcrSettingsData.builder()
+                    .allowedGlyphs("0123456789")
+                    .textLayout(TextLayout.SINGLE_LINE)
+                    .build();
 
     // spent stamina: digits only, near-white foreground
     public static final OcrSettingsData SPENT_STAMINA_SETTINGS =
@@ -83,7 +98,7 @@ public final class CommonOCRSettings {
     // special rewards heading: "Special Rewards (8 left)" in white on a blue section bar
     public static final OcrSettingsData POLAR_SPECIAL_REWARDS_SETTINGS =
             buildConfig("SpecialRewardsleft0123456789() ", true,
-                    255, 255, 255, TextLayout.SINGLE_LINE);
+                    255, 255, 255, TextLayout.TEXT_BLOCK);
 
     // extraction pattern for pulling first integer from noisy OCR text
     public static final Pattern NUMBER_PATTERN = Pattern.compile(".*?(\\d+).*");

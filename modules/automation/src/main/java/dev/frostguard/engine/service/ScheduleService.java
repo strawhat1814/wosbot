@@ -108,6 +108,8 @@ public class ScheduleService {
 			return;
 		}
 
+		wireAdbCircuitBreaker(enabled);
+
 		enabled.stream()
 				.sorted(Comparator.comparing(AccountDescriptor::getPriority).reversed())
 				.forEach(account -> prepareQueue(account, globalConfig));
@@ -116,6 +118,30 @@ public class ScheduleService {
 		notifyQueueState(null, false);
 		trackStart(enabled, globalConfig);
 		notifyBotState(true, false);
+	}
+
+	/**
+	 * Pause/resume all queues around a single kill-server + bridge reboot so
+	 * GlobalMonitor and peer profiles cannot race ADB recovery.
+	 */
+	private void wireAdbCircuitBreaker(List<AccountDescriptor> enabled) {
+		EmulatorController.getInstance().configureAdbCircuitBreaker(
+				this::suspendEngine,
+				this::resumeEngine,
+				() -> enabledAccounts(ProfileService.obtain().fetchAllAccounts()).stream()
+						.map(AccountDescriptor::getEmulatorNumber)
+						.filter(emu -> emu != null && !emu.isBlank())
+						.collect(Collectors.toCollection(LinkedHashSet::new)),
+				this::alertHostAdbDead);
+	}
+
+	private void alertHostAdbDead(String message) {
+		try {
+			TelegramBotService.getInstance().notifyAllowedChat(message);
+		} catch (Exception ex) {
+			log(TpMessageSeverityEnum.ERROR, "ScheduleService", "-",
+					"HOST ADB DEAD Telegram alert failed: " + ex.getMessage());
+		}
 	}
 
 	public void addEngineObserver(BotStateListener observer) {

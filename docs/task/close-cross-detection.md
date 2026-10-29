@@ -7,9 +7,10 @@ coordinates; the detector never taps or decides whether the current screen is
 safe to dismiss.
 
 The detector uses multi-scale grayscale OpenCV template matching with masks
-derived from each template's bright close glyph. The masks exclude changing
-offer artwork and header colors without tying the vision module to a task or
-overlay lifecycle. Invalid normalized-correlation cells from uniform regions
+derived from each template's close glyph. White Xs use a high brightness mask;
+warm orange Xs (Treasure Trio login pack) use a lower mask threshold plus
+`closeCrossOrange.png`. The masks exclude changing offer artwork and header
+colors without tying the vision module to a task or overlay lifecycle. Invalid normalized-correlation cells from uniform regions
 are ignored. The existing startup overlay dismissal remains separate and
 retains its own narrow search, threshold, and bounded tap attempts.
 

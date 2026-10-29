@@ -96,6 +96,10 @@ public class Profile {
 	@Column(name = "character_server", nullable = true)
 	private String realm;
 
+	/** Other profile id when two emulators share one game login; null when unpaired. */
+	@Column(name = "shared_login_peer_profile_id", nullable = true)
+	private Long sharedLoginPeerProfileId;
+
 	@OneToMany(mappedBy = "owner", cascade = CascadeType.ALL, orphanRemoval = true)
 	private List<Config> settings = new ArrayList<>();
 
@@ -202,6 +206,8 @@ public class Profile {
 	public void setGuildTag(String v)   { this.guildTag = v; }
 	public String getRealm()            { return realm; }
 	public void setRealm(String v)      { this.realm = v; }
+	public Long getSharedLoginPeerProfileId() { return sharedLoginPeerProfileId; }
+	public void setSharedLoginPeerProfileId(Long v) { this.sharedLoginPeerProfileId = v; }
 	public List<Config> getSettings()   { return settings; }
 	public void setSettings(List<Config> v) { this.settings = v; }
 	public Set<ProfileTag> getTags() { return tags; }

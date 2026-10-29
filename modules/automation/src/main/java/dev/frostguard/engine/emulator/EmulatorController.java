@@ -175,6 +175,68 @@ public class EmulatorController {
     public String  getAdbPath()                           { requireBackend(); return backend.getAdbPath(); }
     public String  getDeviceSerial(String i)              { requireBackend(); return backend.getPublicDeviceSerial(i); }
 
+    /**
+     * Wire pause/resume + device discovery into the shared ADB circuit breaker.
+     * Call from {@code ScheduleService.launchEngine()} so coordinated recovery can
+     * suspend queues without EmulatorInstance depending on the scheduler.
+     */
+    public void configureAdbCircuitBreaker(Runnable pauseEngine,
+            Runnable resumeEngine,
+            java.util.function.Supplier<Collection<String>> deviceIndexes) {
+        configureAdbCircuitBreaker(pauseEngine, resumeEngine, deviceIndexes, message -> {});
+    }
+
+    public void configureAdbCircuitBreaker(Runnable pauseEngine,
+            Runnable resumeEngine,
+            java.util.function.Supplier<Collection<String>> deviceIndexes,
+            java.util.function.Consumer<String> operatorAlert) {
+        requireBackend();
+        backend.circuitBreaker().configure(
+                pauseEngine,
+                resumeEngine,
+                deviceIndexes,
+                backend::recoverAdbFully,
+                backend::getAdbPath,
+                operatorAlert);
+    }
+
+    public boolean isAdbCaptureAllowed() {
+        if (backend == null) {
+            return true;
+        }
+        return backend.circuitBreaker().isCaptureAllowed();
+    }
+
+    public AdbCircuitBreaker.State adbCircuitState() {
+        if (backend == null) {
+            return AdbCircuitBreaker.State.CLOSED;
+        }
+        return backend.circuitBreaker().state();
+    }
+
+    /** Pause queues, kill-server + bridge reboot, reconnect all, resume. */
+    public boolean recoverAdbCoordinated(String reason) {
+        return recoverAdbCoordinated(reason, null);
+    }
+
+    /**
+     * Coordinated recovery with a live per-device probe callback
+     * (emulator index, healthy) fired as soon as each device is probed.
+     */
+    public boolean recoverAdbCoordinated(String reason,
+            java.util.function.BiConsumer<String, Boolean> onDeviceProbed) {
+        requireBackend();
+        return backend.circuitBreaker().recoverNow(reason, onDeviceProbed);
+    }
+
+    /** Per-device probe map from the last coordinated recovery (empty if none yet). */
+    public AdbRecoveryReport lastAdbRecoveryReport() {
+        if (backend == null) {
+            return AdbRecoveryReport.empty();
+        }
+        return backend.circuitBreaker().lastRecoveryReport();
+    }
+
     // --- OCR ---
 
     public String readText(String idx, PointData a, PointData b) throws IOException, OcrException {

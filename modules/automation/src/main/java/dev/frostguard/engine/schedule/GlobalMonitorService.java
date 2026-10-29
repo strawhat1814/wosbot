@@ -112,10 +112,18 @@ public class GlobalMonitorService {
     // ── monitoring loop ─────────────────────────────────────────────
 
     private void runCycle() {
+        if (!controller.isAdbCaptureAllowed()) {
+            log.debug("GlobalMonitor skipping cycle — ADB circuit breaker={}",
+                    controller.adbCircuitState());
+            return;
+        }
         for (MonitoredEntry entry : monitoredProfiles.values()) {
             try {
                 String devIdx = entry.profile.getEmulatorNumber();
                 if (!controller.isRunning(devIdx)) continue;
+                if (!controller.isAdbCaptureAllowed()) {
+                    return;
+                }
                 RawImageData frame = controller.captureScreen(devIdx);
                 processPreemptionRules(entry, frame);
                 processInjectionRules(entry, frame);

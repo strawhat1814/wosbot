@@ -158,6 +158,26 @@ public enum ExpertSkillItemEnum implements PrioritizableItemData {
         return null;
     }
 
+    /**
+     * Resolves a persisted priority identifier to a skill slot.
+     * Matches {@link #configKey()} (e.g. {@code agnes_skill_1}), not the enum
+     * constant name ({@code AGNES_SLOT_1}).
+     *
+     * @param identifier stored config token, case-insensitive
+     * @return the matching slot, or {@code null} when unknown
+     */
+    public static ExpertSkillItemEnum fromKey(String identifier) {
+        if (identifier == null || identifier.isBlank()) {
+            return null;
+        }
+        for (ExpertSkillItemEnum slot : values()) {
+            if (slot.matchesKey(identifier)) {
+                return slot;
+            }
+        }
+        return null;
+    }
+
     /* ---------- PrioritizableItemData ---------- */
 
     @Override

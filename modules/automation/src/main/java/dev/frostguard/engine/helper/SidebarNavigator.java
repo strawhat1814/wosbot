@@ -12,6 +12,7 @@ import dev.frostguard.api.domain.PointData;
 import dev.frostguard.api.domain.RawImageData;
 import dev.frostguard.engine.emulator.EmulatorController;
 import dev.frostguard.engine.input.TapInteractionService;
+import dev.frostguard.engine.input.TapJitterPolicy;
 import dev.frostguard.engine.nav.CommonGameAreas;
 import dev.frostguard.engine.nav.SidebarDestination;
 import dev.frostguard.engine.nav.SidebarFrameClassifier;
@@ -38,9 +39,18 @@ public final class SidebarNavigator {
     private static final int DESTINATION_SETTLE_MS = 2_000;
     private static final int ROW_ICON_THRESHOLD = 88;
     private static final int ROW_ACTION_THRESHOLD = 88;
+    /** Same title crop DeploymentHelper uses for the Rally "March Queue" unlock / full popup. */
+    private static final int MARCH_QUEUE_UNLOCK_THRESHOLD = 85;
+    private static final int MARCH_QUEUE_DISMISS_SETTLE_MS = 500;
+    /** Softer match for My Rewards green checkmarks that sit just under 88. */
+    private static final int CLAIM_ACTION_RETRY_THRESHOLD = 78;
     private static final int GO_LEFT_OFFSET = 315;
     private static final int GO_RIGHT_OFFSET = 394;
-    private static final int GO_HALF_HEIGHT = 30;
+    /**
+     * Vertical half-extent of the Claim/Go hit box. 30px clips Online Rewards /
+     * Warm Welcome green checkmarks (live match ~0.42); 40px restores ~0.99.
+     */
+    private static final int GO_HALF_HEIGHT = 40;
 
     private final EmulatorController emu;
     private final String device;
@@ -78,6 +88,20 @@ public final class SidebarNavigator {
         AreaData actionArea = rowActionAreaFor(rowIcon);
         ImageSearchResultData action = locateRowAction(destination, actionArea, actionFrame);
         if (action == null || !action.isFound()) {
+            // Fresh frame: claim checkmarks often settle a beat after the row icon.
+            actionFrame = emu.captureScreen(device);
+            rowIcon = locateRowIcon(destination, actionFrame);
+            if (rowIcon.isFound()) {
+                actionArea = rowActionAreaFor(rowIcon);
+                action = locateRowAction(destination, actionArea, actionFrame);
+                if (action == null || !action.isFound()) {
+                    action = locateRowAction(destination, actionArea, actionFrame, CLAIM_ACTION_RETRY_THRESHOLD);
+                }
+            }
+        }
+        if (action == null || !action.isFound()) {
+            // Do not blind-tap the Claim slot: when the checkmark is gone the slot holds a
+            // cooldown timer. Tapping it leaves Daily open and the task OCR-retries forever.
             log.info("Sidebar row found without an expected action: " + destination
                     + " icon=" + rowIcon + " actionArea=" + actionArea);
             return false;
@@ -89,6 +113,26 @@ public final class SidebarNavigator {
         if (selectedSection().isEmpty()) {
             return true;
         }
+
+        // Claim checkmarks can collect or settle without leaving Daily. Prefer Go next.
+        if (hasGoAction(destination)) {
+            RawImageData goFrame = emu.captureScreen(device);
+            ImageSearchResultData goIcon = locateRowIcon(destination, goFrame);
+            if (goIcon.isFound()) {
+                AreaData goArea = rowActionAreaFor(goIcon);
+                ImageSearchResultData goAction = locateSpecificRowAction(
+                        SidebarRowAction.GO, goArea, goFrame, ROW_ACTION_THRESHOLD);
+                if (goAction.isFound()) {
+                    log.info("Sidebar stayed open after first action; retrying with Go: "
+                            + destination + " action=" + goAction);
+                    taps.tapInside(goAction, 1, DESTINATION_SETTLE_MS);
+                    if (selectedSection().isEmpty()) {
+                        return true;
+                    }
+                }
+            }
+        }
+
         log.warn("Sidebar stayed open after tapping destination " + destination);
         return false;
     }
@@ -149,18 +193,40 @@ public final class SidebarNavigator {
                 log.warn("Refusing to tap the sidebar trigger without a Home or World anchor");
                 return false;
             }
+            // Sample the full handle strip at random. Only after an Add March hit (March Queue
+            // unlock dialog) does the retry force the opposite vertical half.
+            AreaData fullTrigger = CommonGameAreas.LEFT_MENU_TRIGGER;
+            TriggerHalf forceHalf = null;
+            TriggerHalf lastHalf = null;
             int triggerTaps = 0;
             while (current.isEmpty() && triggerTaps < MAX_TRIGGER_TAPS) {
                 triggerTaps++;
+                AreaData trigger;
+                PointData tapPoint;
+                TriggerHalf half;
+                if (forceHalf != null) {
+                    half = forceHalf;
+                    trigger = verticalHalf(fullTrigger, half);
+                    tapPoint = TapJitterPolicy.sampleInsideUniform(trigger);
+                    forceHalf = null;
+                } else {
+                    trigger = fullTrigger;
+                    tapPoint = TapJitterPolicy.sampleInsideUniform(trigger);
+                    half = halfContaining(fullTrigger, tapPoint);
+                }
+                lastHalf = half;
                 log.debug("Sidebar closed/unknown; trigger tap " + triggerTaps + "/" + MAX_TRIGGER_TAPS
-                        + " before selecting " + target);
-                taps.tapInside(CommonGameAreas.LEFT_MENU_TRIGGER, 1, SIDEBAR_OPEN_SETTLE_MS);
+                        + " half=" + half + " point=" + tapPoint + " area=" + trigger
+                        + " before selecting " + target
+                        + (triggerTaps > 1 ? " (retry)" : ""));
+                taps.tapNear(tapPoint, 0, 1, SIDEBAR_OPEN_SETTLE_MS);
 
                 TransitionObservation observation = awaitSection(Optional::isPresent);
                 current = observation.section();
                 if (current.isPresent()) {
                     if (observation.checks() > 1 || triggerTaps > 1) {
                         log.debug("Sidebar open confirmed after triggerTaps=" + triggerTaps
+                                + " half=" + half
                                 + " checks=" + observation.checks()
                                 + " observed=" + current.orElseThrow());
                     }
@@ -175,15 +241,38 @@ public final class SidebarNavigator {
                     break;
                 }
                 boolean rootScreen = retryState.rootScreen();
+                if (!rootScreen) {
+                    // Accidental Add March opens the unlock/purchase March Queue dialog.
+                    if (dismissMarchQueueUnlockDialog()) {
+                        forceHalf = half.opposite();
+                        log.info("Dismissed March Queue unlock dialog after sidebar trigger half="
+                                + half + "; will retry opposite half=" + forceHalf
+                                + " if attempts remain");
+                    } else {
+                        log.warn("Sidebar trigger left the root screen; pressing Back");
+                        emu.pressBack(device);
+                        interruptibleWait(400);
+                    }
+                    retryState = screenStates.read();
+                    current = retryState.section();
+                    if (current.isPresent()) {
+                        break;
+                    }
+                    rootScreen = retryState.rootScreen();
+                }
                 if (!shouldRetryTrigger(triggerTaps, observation, current, rootScreen)) {
                     log.warn("Sidebar open not confirmed: triggerTaps=" + triggerTaps + "/"
-                            + MAX_TRIGGER_TAPS + " checks=" + observation.checks()
+                            + MAX_TRIGGER_TAPS + " half=" + lastHalf
+                            + " checks=" + observation.checks()
                             + " interrupted=" + observation.interrupted()
                             + " observed=closed/unknown rootScreen=" + rootScreen);
                     return false;
                 }
                 log.debug("Sidebar still closed/unknown on a verified root screen after checks="
-                        + observation.checks() + "; retrying the trigger once");
+                        + observation.checks()
+                        + (forceHalf != null
+                                ? "; retrying opposite half after Add March"
+                                : "; retrying full trigger strip"));
             }
         }
 
@@ -267,16 +356,53 @@ public final class SidebarNavigator {
 
     private ImageSearchResultData locateRowAction(SidebarDestination destination, AreaData area,
                                                   RawImageData frame) {
+        return locateRowAction(destination, area, frame, ROW_ACTION_THRESHOLD);
+    }
+
+    private ImageSearchResultData locateRowAction(SidebarDestination destination, AreaData area,
+                                                  RawImageData frame, int threshold) {
         for (SidebarRowAction action : destination.actions()) {
-            for (TemplatesEnum template : action.templates()) {
-                ImageSearchResultData result = emu.locatePattern(device, frame, template,
-                        area.topLeft(), area.bottomRight(), ROW_ACTION_THRESHOLD);
-                if (result.isFound()) {
-                    return result;
-                }
+            ImageSearchResultData result = locateSpecificRowAction(action, area, frame, threshold);
+            if (result.isFound()) {
+                return result;
             }
         }
         return ImageSearchResultData.miss();
+    }
+
+    private ImageSearchResultData locateSpecificRowAction(SidebarRowAction action, AreaData area,
+                                                          RawImageData frame, int threshold) {
+        for (TemplatesEnum template : action.templates()) {
+            ImageSearchResultData result = emu.locatePattern(device, frame, template,
+                    area.topLeft(), area.bottomRight(), threshold);
+            if (result.isFound()) {
+                return result;
+            }
+        }
+        return ImageSearchResultData.miss();
+    }
+
+    /** My Rewards rows only expose Claim (green checkmark), never Go. */
+    static boolean isClaimOnly(SidebarDestination destination) {
+        SidebarRowAction[] actions = destination.actions();
+        if (actions.length == 0) {
+            return false;
+        }
+        for (SidebarRowAction action : actions) {
+            if (action != SidebarRowAction.CLAIM) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    static boolean hasGoAction(SidebarDestination destination) {
+        for (SidebarRowAction action : destination.actions()) {
+            if (action == SidebarRowAction.GO) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private ScreenState captureScreenState() {
@@ -325,6 +451,60 @@ public final class SidebarNavigator {
                 && observed.isEmpty() && rootScreen;
     }
 
+    /**
+     * Splits the collapsed-handle strip into an upper or lower half so a second trigger can
+     * avoid the World "Add March" control that overlaps one half of the strip.
+     */
+    static AreaData verticalHalf(AreaData full, TriggerHalf half) {
+        if (full == null || half == null) {
+            throw new IllegalArgumentException("full area and half are required");
+        }
+        int x0 = Math.min(full.topLeft().getX(), full.bottomRight().getX());
+        int x1 = Math.max(full.topLeft().getX(), full.bottomRight().getX());
+        int y0 = Math.min(full.topLeft().getY(), full.bottomRight().getY());
+        int y1 = Math.max(full.topLeft().getY(), full.bottomRight().getY());
+        int midY = y0 + (y1 - y0) / 2;
+        if (half == TriggerHalf.UPPER) {
+            return new AreaData(new PointData(x0, y0), new PointData(x1, midY));
+        }
+        return new AreaData(new PointData(x0, midY), new PointData(x1, y1));
+    }
+
+    /** Which vertical half of {@code full} contains {@code point} (midline counts as lower). */
+    static TriggerHalf halfContaining(AreaData full, PointData point) {
+        if (full == null || point == null) {
+            throw new IllegalArgumentException("full area and point are required");
+        }
+        int y0 = Math.min(full.topLeft().getY(), full.bottomRight().getY());
+        int y1 = Math.max(full.topLeft().getY(), full.bottomRight().getY());
+        int midY = y0 + (y1 - y0) / 2;
+        return point.getY() < midY ? TriggerHalf.UPPER : TriggerHalf.LOWER;
+    }
+
+    /**
+     * Closes the March Queue unlock/purchase dialog when a sidebar handle tap hit Add March.
+     * Reuses the Rally "March Queue" title template and close point.
+     */
+    private boolean dismissMarchQueueUnlockDialog() {
+        RawImageData frame = emu.captureScreen(device);
+        AreaData titleArea = CommonGameAreas.RALLY_MARCH_QUEUE_FULL_AREA;
+        ImageSearchResultData popup = emu.locatePattern(
+                device,
+                frame,
+                TemplatesEnum.RALLY_MARCH_QUEUE_FULL,
+                titleArea.topLeft(),
+                titleArea.bottomRight(),
+                MARCH_QUEUE_UNLOCK_THRESHOLD);
+        if (!popup.isFound()) {
+            return false;
+        }
+        log.warn("March Queue unlock dialog after sidebar trigger at " + popup.getPoint()
+                + " score=" + popup.getMatchScore());
+        taps.tapNear(CommonGameAreas.RALLY_MARCH_QUEUE_FULL_CLOSE);
+        interruptibleWait(MARCH_QUEUE_DISMISS_SETTLE_MS);
+        return true;
+    }
+
     private boolean interruptibleWait(long milliseconds) {
         try {
             Thread.sleep(milliseconds);
@@ -355,6 +535,15 @@ public final class SidebarNavigator {
     @FunctionalInterface
     interface Waiter {
         boolean waitFor(long milliseconds);
+    }
+
+    enum TriggerHalf {
+        UPPER,
+        LOWER;
+
+        TriggerHalf opposite() {
+            return this == UPPER ? LOWER : UPPER;
+        }
     }
 
     private enum ScrollDirection {

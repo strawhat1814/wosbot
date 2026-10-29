@@ -78,11 +78,15 @@ public class StorehouseChestRoutine extends DelayedTask {
     private static final int BUBBLE_SEARCH_ATTEMPTS = 6;
     private static final long BUBBLE_SEARCH_DELAY_MILLIS = 250L;
     private static final int CLAIM_CLOSE_SETTLE_MILLIS = 800;
+    /** Let the stamina reward dialog finish opening before the first Claim poll. */
+    private static final int STAMINA_DIALOG_OPEN_SETTLE_MILLIS = 1_200;
     private static final int BUBBLE_CONFIRMATION_MARGIN = 24;
     private static final int CLAIM_BUTTON_POLL_INTERVAL_MILLIS = 400;
-    private static final int CLAIM_BUTTON_TIMEOUT_MILLIS = 5_000;
+    private static final int CLAIM_BUTTON_TIMEOUT_MILLIS = 10_000;
     private static final int REWARD_TITLE_THRESHOLD = 88;
+    private static final int REWARD_TITLE_SOFT_THRESHOLD = 78;
     private static final int CLAIM_BUTTON_THRESHOLD = 88;
+    private static final int CLAIM_BUTTON_SOFT_THRESHOLD = 78;
     private static final int TOOLTIP_TITLE_THRESHOLD = 88;
     private static final String BUILDING_COUNTDOWN_WHITELIST = "0123456789:d";
     private static final int BASE_STOREHOUSE_STAMINA = 120;
@@ -211,6 +215,7 @@ public class StorehouseChestRoutine extends DelayedTask {
                 StorehouseBubbleDetector.Candidate candidate) {
             logInfo("Stamina bubble found. Opening its claim dialog.");
             tapInside(candidate.center(), candidate.center());
+            sleepTask(STAMINA_DIALOG_OPEN_SETTLE_MILLIS);
             ImageSearchResultData claimButton = awaitStaminaClaimButton();
             if (claimButton == null) {
                 captureInterfaceFailure("stamina-claim-button-missing");
@@ -319,15 +324,43 @@ public class StorehouseChestRoutine extends DelayedTask {
                                 TemplatesEnum.STOREHOUSE_STAMINA_REWARD_TITLE,
                                 STAMINA_REWARD_TITLE_AREA,
                                 REWARD_TITLE_THRESHOLD);
+                        if (title != null && title.isFound()) {
+                            return true;
+                        }
+                        title = locateStaminaDialogTemplate(
+                                TemplatesEnum.STOREHOUSE_STAMINA_REWARD_TITLE,
+                                STAMINA_REWARD_TITLE_AREA,
+                                REWARD_TITLE_SOFT_THRESHOLD);
                         return title != null && title.isFound();
                     }
 
                     @Override
                     public ImageSearchResultData findClaimButton() {
-                        return locateStaminaDialogTemplate(
+                        ImageSearchResultData claimText = locateStaminaDialogTemplate(
                                 TemplatesEnum.STOREHOUSE_STAMINA_CLAIM_TEXT,
                                 STAMINA_CLAIM_BUTTON_AREA,
                                 CLAIM_BUTTON_THRESHOLD);
+                        if (claimText != null && claimText.isFound()) {
+                            return claimText;
+                        }
+                        ImageSearchResultData claimButton = locateStaminaDialogTemplate(
+                                TemplatesEnum.STOREHOUSE_STAMINA_CLAIM_BUTTON,
+                                STAMINA_CLAIM_BUTTON_AREA,
+                                CLAIM_BUTTON_THRESHOLD);
+                        if (claimButton != null && claimButton.isFound()) {
+                            return claimButton;
+                        }
+                        claimText = locateStaminaDialogTemplate(
+                                TemplatesEnum.STOREHOUSE_STAMINA_CLAIM_TEXT,
+                                STAMINA_CLAIM_BUTTON_AREA,
+                                CLAIM_BUTTON_SOFT_THRESHOLD);
+                        if (claimText != null && claimText.isFound()) {
+                            return claimText;
+                        }
+                        return locateStaminaDialogTemplate(
+                                TemplatesEnum.STOREHOUSE_STAMINA_CLAIM_BUTTON,
+                                STAMINA_CLAIM_BUTTON_AREA,
+                                CLAIM_BUTTON_SOFT_THRESHOLD);
                     }
 
                     @Override
@@ -352,6 +385,9 @@ public class StorehouseChestRoutine extends DelayedTask {
                     }
                 }, Duration.ofMillis(CLAIM_BUTTON_TIMEOUT_MILLIS), System::nanoTime);
         if (result.claimButton() != null) {
+            if (!result.rewardDialogSeen()) {
+                logInfo("Storehouse stamina Claim control found without a title match; continuing with Claim.");
+            }
             return result.claimButton();
         }
         logWarning("Storehouse stamina reward was not verified with a Claim button"

@@ -70,12 +70,20 @@ public class WarAcademyRoutine extends DelayedTask {
             return;
         }
 
-        ShardRedeemCandidate shardRow = locateShardRedeemRow();
-        if (shardRow == null) {
+        ShardRedeemScan scan = locateShardRedeemRow();
+        if (scan.outcome() == ShardRedeemScanOutcome.NO_REDEEM_BUTTONS) {
+            // Usually means Redeem tab never opened (stale validation crop / wrong screen).
+            logWarning(routineLogWarAcademyLine(
+                    "No Redeem buttons on list after Redeem tab tap; retrying instead of daily reset."));
+            reschedule(LocalDateTime.now().plusMinutes(RETRY_DELAY_MINUTES_MS));
+            return;
+        }
+        if (scan.candidate() == null) {
             logInfo(routineLogWarAcademyLine("No shard Redeem row with Remaining 1-20."));
             reschedule(GameTimeUtils.dailyResetTime());
             return;
         }
+        ShardRedeemCandidate shardRow = scan.candidate();
 
         logInfo(routineLogWarAcademyLine(
                 String.format("Selected shard Redeem row with Remaining %d.", shardRow.remaining())));
@@ -101,14 +109,20 @@ public class WarAcademyRoutine extends DelayedTask {
 
     private void managePostRedemptionCheck() {
         logInfo(routineLogWarAcademyLine("Inspecting for additional shards after redemption."));
-        ShardRedeemCandidate leftover = locateShardRedeemRow();
-        if (leftover == null) {
+        ShardRedeemScan leftover = locateShardRedeemRow();
+        if (leftover.outcome() == ShardRedeemScanOutcome.NO_REDEEM_BUTTONS) {
+            logWarning(routineLogWarAcademyLine(
+                    "Post-redeem list lost Redeem buttons; retrying instead of assuming done."));
+            reschedule(LocalDateTime.now().plusMinutes(RETRY_DELAY_MINUTES_MS));
+            return;
+        }
+        if (leftover.candidate() == null) {
             logInfo(routineLogWarAcademyLine("No remaining shard Redeem row. Planning next run for game reset."));
             reschedule(GameTimeUtils.dailyResetTime());
         } else {
             logInfo(routineLogWarAcademyLine(String.format(
                     "Additional shards detected: %d. Planning next run in %d hours.",
-                    leftover.remaining(), ADDITIONAL_SHARDS_DELAY_HOURS_MS)));
+                    leftover.candidate().remaining(), ADDITIONAL_SHARDS_DELAY_HOURS_MS)));
             reschedule(LocalDateTime.now().plusHours(ADDITIONAL_SHARDS_DELAY_HOURS_MS));
         }
     }
@@ -117,13 +131,13 @@ public class WarAcademyRoutine extends DelayedTask {
         return "WarAcademyRoutine | " + note;
     }
 
-    private ShardRedeemCandidate locateShardRedeemRow() {
+    private ShardRedeemScan locateShardRedeemRow() {
         logInfo(routineLogWarAcademyLine("Scanning Redeem rows by Remaining count."));
         List<ImageSearchResultData> redeemButtons = templateSearchHelper.locateAllPatterns(
                 TemplatesEnum.WAR_ACADEMY_SHARD_REDEEM_BUTTON, REDEEM_BUTTON_SEARCH);
         if (redeemButtons.isEmpty()) {
             logWarning(routineLogWarAcademyLine("No Redeem buttons detected on list."));
-            return null;
+            return ShardRedeemScan.noButtons();
         }
 
         List<ShardRedeemCandidate> shardRows = new ArrayList<>();
@@ -145,14 +159,14 @@ public class WarAcademyRoutine extends DelayedTask {
         }
 
         if (shardRows.isEmpty()) {
-            return null;
+            return ShardRedeemScan.noneInRange();
         }
         if (shardRows.size() > 1) {
             logWarning(routineLogWarAcademyLine(String.format(
                     "Multiple shard rows matched (%d); aborting to avoid wrong redeem.", shardRows.size())));
-            return null;
+            return ShardRedeemScan.noneInRange();
         }
-        return shardRows.getFirst();
+        return ShardRedeemScan.found(shardRows.getFirst());
     }
 
     private Integer readRemainingAboveRedeem(ImageSearchResultData redeemButton) {
@@ -271,9 +285,10 @@ public class WarAcademyRoutine extends DelayedTask {
             return false;
         }
 
-        logDebug(routineLogWarAcademyLine("Entering Redeem section via detected tab"));
+        logInfo(routineLogWarAcademyLine(String.format(
+                "Entering Redeem section via tab @ (%d,%d).", redeemTab.getHitX(), redeemTab.getHitY())));
         tapInside(redeemTab);
-        sleepTask(500L);
+        sleepTask(800L);
         return true;
     }
 
@@ -326,6 +341,26 @@ public class WarAcademyRoutine extends DelayedTask {
     }
 
     private record ShardRedeemCandidate(ImageSearchResultData button, int remaining) {
+    }
+
+    private enum ShardRedeemScanOutcome {
+        FOUND,
+        NONE_IN_RANGE,
+        NO_REDEEM_BUTTONS
+    }
+
+    private record ShardRedeemScan(ShardRedeemScanOutcome outcome, ShardRedeemCandidate candidate) {
+        static ShardRedeemScan found(ShardRedeemCandidate candidate) {
+            return new ShardRedeemScan(ShardRedeemScanOutcome.FOUND, candidate);
+        }
+
+        static ShardRedeemScan noneInRange() {
+            return new ShardRedeemScan(ShardRedeemScanOutcome.NONE_IN_RANGE, null);
+        }
+
+        static ShardRedeemScan noButtons() {
+            return new ShardRedeemScan(ShardRedeemScanOutcome.NO_REDEEM_BUTTONS, null);
+        }
     }
 
     static boolean redemptionMadeProgress(int initialShards, int finalShards) {

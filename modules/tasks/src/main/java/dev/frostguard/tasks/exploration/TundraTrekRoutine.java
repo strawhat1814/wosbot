@@ -85,7 +85,7 @@ public class TundraTrekRoutine extends DelayedTask {
         logInfo("Navigating to Tundra Trek Supplies...");
 
         if (!navigationHelper.navigateToSidebarDestination(SidebarDestination.TUNDRA_TREK_SUPPLIES)) {
-            logWarning("Trek Supplies destination is not available in the Daily sidebar");
+            logWarning("Trek Supplies sidebar navigation failed (row missing, Claim/Go did not leave Daily, or unavailable).");
             return false;
         }
 

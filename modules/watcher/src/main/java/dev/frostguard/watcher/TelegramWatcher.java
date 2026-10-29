@@ -53,7 +53,12 @@ import java.util.concurrent.locks.ReentrantLock;
  *   token=<BotFather token>
  *   chatId=<your Telegram numeric chat-ID>
  *   botJarPath=<absolute path to frostguard-x.x.x.jar>
+ *   botLauncherPath=<optional absolute path to .exe/.cmd/.bat used by /launch>
  *   localPort=8765
+ *
+ * {@code botLauncherPath} wins over the {@code frostguard.launcher} system
+ * property so a fork overnight can keep /launch on a source launcher even when
+ * the packaged Nightly watcher exe hard-codes its own app launcher.
  */
 public class TelegramWatcher {
 
@@ -110,6 +115,10 @@ public class TelegramWatcher {
         String token    = cfg.getProperty("token",      "").trim();
         String chatId   = cfg.getProperty("chatId",     "").trim();
         String jarPath  = cfg.getProperty("botJarPath", "").trim();
+        String launcherPath = cfg.getProperty("botLauncherPath", "").trim();
+        if (launcherPath.isBlank()) {
+            launcherPath = System.getProperty(APP_LAUNCHER_PROPERTY, "").trim();
+        }
         int    localPort;
         try {
             localPort = Integer.parseInt(
@@ -137,7 +146,7 @@ public class TelegramWatcher {
             }
         }
 
-        new TelegramWatcher(token, allowedChatId, jarPath, localPort).run();
+        new TelegramWatcher(token, allowedChatId, jarPath, localPort, launcherPath).run();
     }
 
     // ── instance fields ───────────────────────────────────────────────────────
@@ -160,13 +169,13 @@ public class TelegramWatcher {
     private static final long BACKOFF_MAX_MS     = 60_000;
     private long currentBackoffMs = BACKOFF_INITIAL_MS;
 
-    private TelegramWatcher(String token, long allowedChatId, String jarPath, int localPort) {
+    private TelegramWatcher(String token, long allowedChatId, String jarPath, int localPort,
+            String launcherPath) {
         this.token         = token;
         this.allowedChatId = allowedChatId;
         this.botJar        = new File(jarPath);
         this.botJarDir     = botJar.getParentFile();
-        String launcherPath = System.getProperty(APP_LAUNCHER_PROPERTY, "").trim();
-        this.botLauncher   = launcherPath.isBlank() ? null : new File(launcherPath);
+        this.botLauncher   = launcherPath == null || launcherPath.isBlank() ? null : new File(launcherPath);
         this.localPort     = localPort;
         this.workspaceId   = WorkspacePaths.current().identity();
         this.httpClient    = HttpClient.newBuilder()
@@ -178,6 +187,11 @@ public class TelegramWatcher {
 
     private void run() {
         logger.info("Watcher started. Sole Telegram poller. Forwarding app commands to port {}.", localPort);
+        if (botLauncher != null) {
+            logger.info("Telegram /launch uses launcher: {}", botLauncher.getAbsolutePath());
+        } else {
+            logger.info("Telegram /launch uses jar: {}", botJar.getAbsolutePath());
+        }
         System.out.println("[INFO] Watcher running. Send /whelp for the command list.");
 
         while (!Thread.currentThread().isInterrupted()) {
@@ -337,7 +351,14 @@ public class TelegramWatcher {
             Path botJar, WorkspacePaths workspace, boolean headless) {
         java.util.List<String> command = new java.util.ArrayList<>();
         if (nativeLauncher != null) {
-            command.add(nativeLauncher.toAbsolutePath().normalize().toString());
+            Path launcher = nativeLauncher.toAbsolutePath().normalize();
+            String fileName = launcher.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
+            if (fileName.endsWith(".cmd") || fileName.endsWith(".bat")) {
+                String comSpec = System.getenv("ComSpec");
+                command.add(comSpec == null || comSpec.isBlank() ? "cmd.exe" : comSpec);
+                command.add("/c");
+            }
+            command.add(launcher.toString());
         } else {
             command.add(javaExecutable.toString());
             command.add("-D" + WorkspacePaths.WORKSPACE_PROPERTY + "=" + workspace.root());
@@ -575,11 +596,13 @@ public class TelegramWatcher {
               + "`/startbot`    — Begin the automation routines\n"
               + "`/stopbot`     — Pause the automation routines\n"
               + "`/status`      — Show whether automation is running\n"
-              + "`/reboot`      — Restart bot + emulators\n\n"
+              + "`/reboot`      — Restart bot + emulators\n"
+              + "`/closeemus`   — Close unused or all configured emulators\n\n"
               + "📊 *Monitoring & Info*\n"
-              + "`/screenshot`  — Capture & send emulator screen\n"
+              + "`/screenshot`  — Capture screens from all running profiles\n"
               + "`/queue`       — Task queue (schedule / remove / run)\n"
-              + "`/stats`       — Bot activity statistics per profile\n"
+              + "`/allstats`    — Full all-time statistics per profile\n"
+              + "`/dailystats`  — Full Today (UTC) statistics per profile\n"
               + "`/logs`        — Download the Frostguard log\n"
               + "`/profiles`    — View & toggle profiles on/off\n\n"
               + "❓ *Help*\n"
@@ -602,8 +625,11 @@ public class TelegramWatcher {
             ArrayNode row1 = mapper.createArrayNode();
             row1.add(mapper.createObjectNode().put("text", "📸 SCREENSHOT"));
             row1.add(mapper.createObjectNode().put("text", "📋 QUEUE"));
-            row1.add(mapper.createObjectNode().put("text", "📈 STATS"));
             keyboard.add(row1);
+            ArrayNode rowStats = mapper.createArrayNode();
+            rowStats.add(mapper.createObjectNode().put("text", "📚 ALL STATS"));
+            rowStats.add(mapper.createObjectNode().put("text", "📊 DAILY STATS"));
+            keyboard.add(rowStats);
             ArrayNode row2 = mapper.createArrayNode();
             row2.add(mapper.createObjectNode().put("text", "▶️ START BOT"));
             row2.add(mapper.createObjectNode().put("text", "⏹️ STOP BOT"));
@@ -664,6 +690,7 @@ public class TelegramWatcher {
                   + "token=\n"
                   + "chatId=\n"
                   + "botJarPath=\n"
+                  + "botLauncherPath=\n"
                   + "localPort=" + WorkspacePaths.current().defaultLocalPort() + "\n");
             System.out.println("[INFO] Created config template at: " + cfg);
         }

@@ -12,10 +12,19 @@ map scenery cannot masquerade as a selected tab. A missing classification is an
 unknown/closed state, not permission to continue tapping.
 
 Opening the collapsed panel retains one fixed handle area because no stable visible target
-exists in the supplied open-panel frames. The tap region is restricted to the interior of the
-thin arrow at `x=6..16, y=546..554`. This stays clear of both the absolute display edge, where
-MuMu can discard a tap, and the expanded compact Marching panel behind the handle on World. A
-trigger tap is allowed only while a Home or World anchor is present.
+exists in the supplied open-panel frames. The tap region is the operator-captured strip at
+operator rectangle top-left `(1,485)` to bottom-right `(7,615)` (entire box valid). The first
+trigger samples that full strip at random. A trigger tap is allowed only while a Home or
+World anchor is present.
+If the first trigger does not open the panel while City/World is still visible, a second
+trigger re-samples the full strip. When a tap opens the March Queue unlock/purchase dialog
+instead (World "Add March"), that dialog is closed (title template + close control, else
+Back) and the retry uses the opposite vertical half of the strip from the tap that hit
+Add March.
+Stamina is read from the green count under the chief avatar while City or World is
+already showing, so that refresh does not press Back. If a March Queue sidebar open
+still refuses, `MarchHelper` throws `HomeNotFoundException` so the queue enqueues
+Initialize instead of climbing an unhandled action-required streak.
 After the initial 400 ms settle, the navigator polls fresh frames for up to
 roughly two seconds because live logs show that a successful tap can temporarily classify as
 closed or unknown. If no section appears and a fresh Home or World anchor still proves the root
@@ -41,7 +50,11 @@ Opening the collapsed sidebar or changing its section resets the game's list to 
 destination scan therefore checks that initial viewport and then moves only toward the bottom in
 short overlapping 120-pixel gestures. It waits two seconds for the list to settle and scans the
 icon column after every gesture. An unchanged settled icon column establishes the bottom boundary.
-The scan is bounded, and a destination action must close the sidebar to confirm the transition.
+Online Rewards and A Warm Welcome use a `NEAR_BOTTOM` scan: after the Daily tab is verified, the
+navigator pre-scrolls four gestures while only confirming Daily stays selected, then resumes
+icon matching. That avoids paying a template search after every short scroll for My Rewards rows
+that always live at the bottom of Daily. The scan is bounded, and a destination action must close
+the sidebar to confirm the transition.
 Lighthouse Intel is the exception: after its Daily row is validated, navigation closes the sidebar
 and uses the shared Wilderness Intel shortcut opener, which confirms the Intel screen rather than
 treating a closed sidebar as transition evidence. Other destinations retain their direct row-action

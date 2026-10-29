@@ -37,7 +37,9 @@ import dev.frostguard.api.domain.AreaData;
 import dev.frostguard.api.domain.ImageSearchResultData;
 import dev.frostguard.api.domain.OcrSettingsData;
 import dev.frostguard.api.domain.PointData;
+import dev.frostguard.engine.helper.FurnacePanelDetector;
 import dev.frostguard.engine.helper.TemplateSearchHelper;
+import dev.frostguard.engine.nav.CommonGameAreas;
 import dev.frostguard.engine.nav.LeftMenuTextSettings;
 import dev.frostguard.engine.nav.SearchConfigConstants;
 import dev.frostguard.engine.nav.SidebarSection;
@@ -46,8 +48,11 @@ import dev.frostguard.engine.schedule.LaunchPoint;
 import dev.frostguard.engine.service.StatisticsService;
 import dev.frostguard.engine.service.TelegramBotService;
 import dev.frostguard.vision.convert.GameTimeUtils;
+import java.awt.Color;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 
@@ -59,7 +64,8 @@ extends DelayedTask {
     private static final int COMPLETION_SETTLE_SECONDS = 2;
     private static final int DEFAULT_RETRY_MINUTES = 20;
     private static final int FURNITURE_PROGRESS_RETRY_MINUTES = 3;
-    private static final int NO_MAIN_ACTION_RETRY_HOURS = 3;
+    /** After Claim/Go miss + second Growth OCR still miss — back off one hour. */
+    private static final int NO_MAIN_ACTION_RETRY_HOURS = 1;
     private static final int STEEL_WAIT_MINUTES = 15;
     /** Fast furniture: every hold is a fixed 2s ADB swipe, then inspect. */
     private static final int FAST_FURNITURE_HOLD_MS = 2000;
@@ -71,20 +77,42 @@ extends DelayedTask {
     private static final AreaData MISSIONS_BUTTON_AREA = new AreaData(new PointData(15, 1025), new PointData(95, 1085));
     private static final PointData REPLENISH_CONFIRM_POINT = new PointData(511, 1056);
     private static final AreaData GROWTH_TITLE_AREA = new AreaData(new PointData(180, 40), new PointData(540, 110));
-    private static final AreaData GROWTH_TAB_AREA = new AreaData(new PointData(0, 1145), new PointData(720, 1205));
-    private static final AreaData DAILY_TAB_SELECTED_AREA = new AreaData(new PointData(360, 1145), new PointData(720, 1205));
     /**
-     * Fallback Growth-tab tap when templates miss. Keep this on the left blue pill only —
-     * lower/darker pixels beside the missions panel dismiss the window, and the Heroes
-     * home nav sits immediately under the pill (HeroRecruit ~160–217, y≥1190).
+     * Missions tab label band only (Stuart Copy Debug OCR 2026-10-10):
+     * TopLeft(73, 1116), BottomRight(650, 1147). Holds 1–3 tabs: Daily / Growth / Chapter.
+     * Do not split into fixed thirds — Growth X moves with tab count.
      */
-    private static final AreaData GROWTH_TAB_CLICK_AREA = new AreaData(new PointData(185, 1160), new PointData(250, 1172));
-    /** Prefer a fixed center tap over a wide random area so jitter cannot reach Heroes. */
-    private static final PointData GROWTH_TAB_FALLBACK_POINT = new PointData(210, 1166);
-    private static final int GROWTH_TAB_TAP_RADIUS = 3;
-    /** Clamp template-hit taps above Heroes home nav (live unselected ~y 1181 is too low). */
-    private static final int GROWTH_TAB_SAFE_Y_MIN = 1158;
-    private static final int GROWTH_TAB_SAFE_Y_MAX = 1174;
+    private static final AreaData MISSIONS_TAB_BAR_AREA = new AreaData(new PointData(73, 1116), new PointData(650, 1147));
+    /** Legacy template search band — kept inside the tab strip. */
+    private static final AreaData GROWTH_TAB_AREA = MISSIONS_TAB_BAR_AREA;
+    private static final AreaData DAILY_TAB_SELECTED_AREA = new AreaData(new PointData(360, 1145), new PointData(720, 1205));
+    /** Inset from OCR window edges so random taps stay on Growth, not the neighbor tab. */
+    private static final int TAB_OCR_TAP_INSET_X = 28;
+    /** Clamp taps to the traced label band (avoids Heroes nav below the pills). */
+    private static final int GROWTH_TAB_SAFE_Y_MIN = 1116;
+    private static final int GROWTH_TAB_SAFE_Y_MAX = 1147;
+    private static final int GROWTH_TAB_SAFE_X_MIN = 73;
+    private static final int GROWTH_TAB_SAFE_X_MAX = 650;
+    /**
+     * Sliding OCR window across {@link #MISSIONS_TAB_BAR_AREA}. Wide enough for one tab
+     * label on 2–3 tab layouts; stepped so 1-tab Growth still lands in a window.
+     */
+    private static final int TAB_OCR_WINDOW_WIDTH = 220;
+    private static final int TAB_OCR_WINDOW_STEP = 70;
+    /** Same Y as {@link #MISSIONS_TAB_BAR_AREA} — the traced region is already label-only. */
+    private static final int TAB_OCR_LABEL_Y_MIN = 1116;
+    private static final int TAB_OCR_LABEL_Y_MAX = 1147;
+    /** Selected tab text is dark blue on a light pill — white OCR presets miss it. */
+    private static final OcrSettingsData TAB_DARK_TEXT_SETTINGS = OcrSettingsData.builder()
+            .setRemoveBackground(true)
+            .setTextColor(new Color(30, 55, 120))
+            .setAllowedChars("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+            .build();
+    /** Debug-style read: no colour isolation (matches Debugging panel OCR). */
+    private static final OcrSettingsData TAB_PLAIN_OCR_SETTINGS = OcrSettingsData.builder()
+            .setRemoveBackground(false)
+            .setAllowedChars("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+            .build();
     private static final AreaData DAILY_TITLE_AREA = new AreaData(new PointData(180, 40), new PointData(540, 170));
     /**
      * Main Growth mission Go/Claim — right column of the upper mission card.
@@ -97,6 +125,9 @@ extends DelayedTask {
      */
     private static final AreaData MAIN_GO_AREA = new AreaData(new PointData(480, 140), new PointData(720, 480));
     private static final int MAIN_GO_MAX_Y = 480;
+    /** Live Main Go/Claim pill center when OCR confirms the label but templates miss. */
+    private static final PointData MAIN_GO_OCR_FALLBACK_POINT = new PointData(596, 341);
+    private static final PointData MAIN_CLAIM_OCR_FALLBACK_POINT = new PointData(595, 341);
     private static final AreaData ALL_COMPLETE_OCR_AREA = new AreaData(new PointData(80, 400), new PointData(640, 900));
     private static final AreaData HEADER_UPGRADE_AREA = new AreaData(new PointData(540, 500), new PointData(720, 610));
     /** Piece Upgrade only — keep below header Upgrade (~y 500–610) so holds never hit main. */
@@ -141,6 +172,14 @@ extends DelayedTask {
     private static final AreaData BUILDING_CONFIRM_UPGRADE_AREA = new AreaData(new PointData(350, 900), new PointData(700, 1255));
     private static final AreaData QUEUE_AREA_1 = new AreaData(new PointData(95, 370), new PointData(358, 407));
     private static final AreaData QUEUE_AREA_2 = new AreaData(new PointData(95, 443), new PointData(358, 480));
+    /**
+     * City-map construction countdown when CITY sidebar queue OCR is unavailable
+     * (early accounts). Stuart Copy Debug: TopLeft(271, 347) → BottomRight(432, 385).
+     * Still needs heavy live testing — position may shift with camera / building.
+     */
+    private static final AreaData CITY_MAP_CONSTRUCTION_TIMER_AREA =
+            new AreaData(new PointData(271, 347), new PointData(432, 385));
+    private static final int CITY_MAP_TIMER_OCR_ATTEMPTS = 3;
     private static final TemplateSearchHelper.SearchConfig GROWTH_TITLE_SEARCH = TemplateSearchHelper.SearchConfig.builder().withMaxAttempts(3).withDelay(300L).withThreshold(90).withArea(GROWTH_TITLE_AREA).build();
     private static final TemplateSearchHelper.SearchConfig DAILY_TITLE_SEARCH = TemplateSearchHelper.SearchConfig.builder().withMaxAttempts(2).withDelay(250L).withThreshold(85).withArea(DAILY_TITLE_AREA).build();
     private static final TemplateSearchHelper.SearchConfig GROWTH_TAB_SEARCH = TemplateSearchHelper.SearchConfig.builder().withMaxAttempts(3).withDelay(300L).withThreshold(85).withArea(GROWTH_TAB_AREA).build();
@@ -157,7 +196,17 @@ extends DelayedTask {
     private static final TemplateSearchHelper.SearchConfig CITY_UPGRADE_ARROW_SEARCH;
     private static final TemplateSearchHelper.SearchConfig CITY_UPGRADE_ARROW_SCORE_PROBE;
     private static final TemplateSearchHelper.SearchConfig BUILDING_PANEL_UPGRADE_SEARCH;
+    /**
+     * Obtain-more bottom sheet Replenish All. Wider than the legacy (180,1070)–(535,1195)
+     * band — Stuart Copy missed Replenish after Obtain with that tight 90% window.
+     */
+    private static final AreaData REPLENISH_ALL_AREA =
+            new AreaData(new PointData(60, 1000), new PointData(660, 1240));
+    /** Center of the usual Replenish All pill when OCR confirms the label. */
+    private static final PointData REPLENISH_ALL_OCR_TAP = new PointData(358, 1135);
     private static final TemplateSearchHelper.SearchConfig REPLENISH_BUTTON_RECHECK;
+    private static final TemplateSearchHelper.SearchConfig REPLENISH_BUTTON_RELAXED;
+    private static final TemplateSearchHelper.SearchConfig REPLENISH_BUTTON_SCORE_PROBE;
     private static final TemplateSearchHelper.SearchConfig BUILDING_CONFIRM_UPGRADE_SEARCH;
     private static final TemplateSearchHelper.SearchConfig BUILDING_CONFIRM_UPGRADE_RELAXED;
     private static final TemplateSearchHelper.SearchConfig BUILDING_CONFIRM_UPGRADE_POSTCONDITION;
@@ -183,7 +232,7 @@ extends DelayedTask {
             return;
         }
         if (openResult == OpenGrowthResult.NO_MAIN_ACTION) {
-            this.logInfo(this.logLine("No Main Claim/Go \u2014 dismissing and retrying in "
+            this.logInfo(this.logLine("No Main Claim/Go after Growth OCR retries \u2014 dismissing and aborting for "
                     + NO_MAIN_ACTION_RETRY_HOURS + "h"));
             this.dismissToHome();
             this.reschedule(LocalDateTime.now().plusHours(NO_MAIN_ACTION_RETRY_HOURS));
@@ -241,23 +290,46 @@ extends DelayedTask {
                 return OpenGrowthResult.FAILED;
             }
         }
-        // Claim-first: drain every Main Claim before looking for Go.
+
+        OpenGrowthResult firstPass = this.drainClaimsAndTapGo("first pass");
+        if (firstPass != OpenGrowthResult.NO_MAIN_ACTION) {
+            return firstPass;
+        }
+
+        // No Claim and no Go — tap Growth again (OCR then template) and recheck.
+        this.logInfo(this.logLine("No Claim/Go on Growth list — second Growth tab tap"));
+        if (!this.tapGrowthTabOnce(2)) {
+            this.logWarning(this.logLine("Second Growth tab miss — aborting Claim/Go search"));
+            this.logGoMiss();
+            return OpenGrowthResult.NO_MAIN_ACTION;
+        }
+        this.sleepTask(1200L);
+
+        OpenGrowthResult secondPass = this.drainClaimsAndTapGo("after second Growth tap");
+        if (secondPass != OpenGrowthResult.NO_MAIN_ACTION) {
+            return secondPass;
+        }
+        this.logGoMiss();
+        return OpenGrowthResult.NO_MAIN_ACTION;
+    }
+
+    /** Claim-first, then Go. Returns NO_MAIN_ACTION when neither Claim nor Go is available. */
+    private OpenGrowthResult drainClaimsAndTapGo(String phase) {
         this.sleepTask(900L);
-        this.logInfo(this.logLine("Looking for Growth mission Claim (before Go)"));
+        this.logInfo(this.logLine("Looking for Growth mission Claim (before Go) [" + phase + "]"));
         int claimed = this.claimAllReadyGrowthMissions();
         if (claimed > 0) {
-            this.logInfo(this.logLine("Claimed " + claimed + " Growth mission reward(s)"));
+            this.logInfo(this.logLine("Claimed " + claimed + " Growth mission reward(s) [" + phase + "]"));
             StatisticsService.obtain().addToCounter(this.profile, "Growth Missions Claimed", claimed);
             this.sleepTask(800L);
         }
-        this.logInfo(this.logLine("Looking for Growth mission Go"));
+        this.logInfo(this.logLine("Looking for Growth mission Go [" + phase + "]"));
         if (this.tapAnyGoButton()) {
             return OpenGrowthResult.READY_FOR_BUILD;
         }
         if (this.isAllGrowthMissionsComplete()) {
             return OpenGrowthResult.ALL_COMPLETE;
         }
-        this.logGoMiss();
         return OpenGrowthResult.NO_MAIN_ACTION;
     }
 
@@ -273,6 +345,14 @@ extends DelayedTask {
             }
             this.logInfo(this.logLine(String.format(Locale.ROOT, "Tapping Main mission Go at %s (score %.1f)", goPoint, mainGo.getMatchScore())));
             this.tapInside(mainGo);
+            this.sleepTask(2000L);
+            return true;
+        }
+        // Template miss — OCR the upper Go band and tap the live Main Go pill if it reads "Go".
+        if (this.ocrAreaLooksLike(MAIN_GO_AREA, GrowthMissionBuildRoutine::looksLikeGoLabel)) {
+            this.logInfo(this.logLine("Main Go template missed — OCR read Go; tapping fallback "
+                    + String.valueOf(MAIN_GO_OCR_FALLBACK_POINT)));
+            this.tapNear(MAIN_GO_OCR_FALLBACK_POINT, 4);
             this.sleepTask(2000L);
             return true;
         }
@@ -292,6 +372,16 @@ extends DelayedTask {
                 break;
             }
             if (!claim.isFound()) {
+                // One OCR-assisted Claim tap when templates flake but the green pill is still there.
+                if (this.ocrAreaLooksLike(MAIN_GO_CLAIM_AREA, GrowthMissionBuildRoutine::looksLikeClaimLabel)) {
+                    this.logInfo(this.logLine(String.format(Locale.ROOT,
+                            "Claim template missed (best=%.1f) — OCR read Claim; tapping fallback %s",
+                            claim.getMatchScore(), MAIN_CLAIM_OCR_FALLBACK_POINT)));
+                    this.tapNear(MAIN_CLAIM_OCR_FALLBACK_POINT, 4);
+                    ++claimed;
+                    this.sleepTask(900L);
+                    continue;
+                }
                 if (claimed == 0) {
                     this.logInfo(this.logLine(String.format(Locale.ROOT, "Claim not visible (best=%.1f) \u2014 checking Go", claim.getMatchScore())));
                 } else {
@@ -364,111 +454,323 @@ extends DelayedTask {
             this.logWarning(this.logLine("Missions panel not detected after opening"));
             return false;
         }
-        if (this.isOnGrowthMissions() && !this.isOnDailyMissions()) {
-            this.logDebug(this.logLine("Already on Growth Missions"));
+        // One locate+tap only — a second unselected-template tap hits Chapter (Stuart Copy).
+        if (this.tapGrowthTabOnce(1)) {
+            this.sleepTask(1200L);
             return true;
         }
-        for (int attempt = 1; attempt <= 3; ++attempt) {
-            if (this.isOnDailyMissions()) {
-                this.logInfo(this.logLine("Daily Missions detected \u2014 clicking Growth tab (attempt " + attempt + "/3)"));
-            } else {
-                this.logInfo(this.logLine("Growth title not confirmed \u2014 clicking Growth tab (attempt " + attempt + "/3)"));
-            }
-            this.clickGrowthTab(attempt);
-            this.sleepTask(1200L);
-            // Require Daily cleared — Growth title alone can false-positive on Daily chrome
-            // while DAILY_TAB_SELECTED is still lit (live Dave 2026-09-19 13:17).
-            if (this.isOnGrowthMissions() && !this.isOnDailyMissions()) {
-                this.logInfo(this.logLine("Switched to Growth Missions"));
-                return true;
-            }
-            if (this.isOnDailyMissions()) {
-                this.logInfo(this.logLine("Still on Daily after Growth tab tap (attempt " + attempt + ")"));
-            }
-        }
-        this.logWarning(this.logLine("Could not switch from Daily to Growth tab"));
+        this.logWarning(this.logLine("Could not locate Growth tab"));
         return false;
     }
 
-    private void clickGrowthTab(int attempt) {
+    /**
+     * OCR first; if live OCR returns garbage (e.g. strip="s"), fall back to the unselected
+     * Growth template that worked before OCR-only. Never left-point fallback.
+     */
+    private boolean tapGrowthTabOnce(int attempt) {
+        this.logInfo(this.logLine("Growth tab locate (attempt " + attempt + ") — OCR then template"));
+        Optional<AreaData> ocrTapArea = this.findGrowthTabTapAreaByOcr();
+        if (ocrTapArea.isPresent()) {
+            this.logInfo(this.logLine(String.format(Locale.ROOT,
+                    "OCR located Growth tab — jitter tap inside %s (attempt %d)",
+                    ocrTapArea.get(), attempt)));
+            this.tapInside(ocrTapArea.get());
+            return true;
+        }
+
         ImageSearchResultData unselected = this.templateSearchHelper.locatePattern(
                 TemplatesEnum.GROWTH_MISSION_GROWTH_TAB_UNSELECTED, GROWTH_TAB_SEARCH);
-        if (unselected.isFound() && this.isLeftGrowthTabHit(unselected.getPoint())) {
+        if (unselected.isFound() && unselected.getPoint() != null) {
             this.logInfo(this.logLine(String.format(Locale.ROOT,
-                    "Tapping Growth tab (unselected) at %s (score %.1f)",
+                    "OCR miss — tapping Growth unselected template at %s (score %.1f)",
                     unselected.getPoint(), unselected.getMatchScore())));
             this.tapGrowthTabHit(unselected);
-            return;
+            return true;
         }
         ImageSearchResultData selected = this.templateSearchHelper.locatePattern(
                 TemplatesEnum.GROWTH_MISSION_GROWTH_TAB_SELECTED, GROWTH_TAB_SEARCH);
-        // When Daily is selected, "Growth selected" often matches the right Daily pill
-        // (~x 410). Only trust selected hits on the left Growth half.
-        if (selected.isFound() && this.isLeftGrowthTabHit(selected.getPoint())) {
+        if (selected.isFound() && selected.getPoint() != null && selected.getPoint().getX() < 360) {
             this.logInfo(this.logLine(String.format(Locale.ROOT,
-                    "Tapping Growth tab (selected template) at %s (score %.1f)",
+                    "OCR miss — tapping Growth selected template at %s (score %.1f)",
                     selected.getPoint(), selected.getMatchScore())));
             this.tapGrowthTabHit(selected);
-            return;
+            return true;
         }
-        if (selected.isFound()) {
-            this.logWarning(this.logLine(String.format(Locale.ROOT,
-                    "Ignoring Growth-selected match at %s (not left Growth pill) — using click area",
-                    selected.getPoint())));
-        } else if (unselected.isFound()) {
-            this.logWarning(this.logLine(String.format(Locale.ROOT,
-                    "Ignoring Growth-unselected match at %s (not left Growth pill) — using click area",
-                    unselected.getPoint())));
-        }
-        this.logWarning(this.logLine("Growth tab templates missed \u2014 tapping Growth fallback "
-                + String.valueOf(GROWTH_TAB_FALLBACK_POINT) + " / " + String.valueOf(GROWTH_TAB_CLICK_AREA)
-                + " (attempt " + attempt + ")"));
-        // Fixed point first: tapInside on a taller band used to land on Heroes home nav.
-        this.tapNear(GROWTH_TAB_FALLBACK_POINT, GROWTH_TAB_TAP_RADIUS);
+        this.logWarning(this.logLine("Growth tab OCR and templates missed (attempt " + attempt + ")"));
+        return false;
     }
 
-    /** Growth is the left bottom tab; Daily is the right. Reject center/right false hits. */
-    private boolean isLeftGrowthTabHit(PointData point) {
-        return point != null && point.getX() < 360 && point.getX() >= 120;
-    }
-
-    /**
-     * Bottom Growth/Daily tabs sit on a short blue pill. Oversized templates used to
-     * include dimmed backdrop below/beside that pill; {@code tapInside(match)} then
-     * sampled those pixels and dismissed the missions window. Tap near the match
-     * center with a small radius, clamped above Heroes home nav.
-     */
     private void tapGrowthTabHit(ImageSearchResultData hit) {
-        PointData safe = this.safeGrowthTabPoint(hit.getPoint());
-        if (safe.getY() != hit.getPoint().getY() || safe.getX() != hit.getPoint().getX()) {
-            this.logInfo(this.logLine("Clamped Growth tab tap from " + hit.getPoint() + " to " + safe
-                    + " (away from Heroes nav)"));
-        }
-        this.tapNear(safe, GROWTH_TAB_TAP_RADIUS);
-    }
-
-    /** Keep Growth-tab taps on the left pill and above Heroes (~y 1190). */
-    private PointData safeGrowthTabPoint(PointData point) {
+        PointData point = hit.getPoint();
         int x = point.getX();
         int y = point.getY();
-        if (x < 185) {
-            x = 185;
-        } else if (x > 250) {
-            x = 220;
+        if (x < GROWTH_TAB_SAFE_X_MIN) {
+            x = GROWTH_TAB_SAFE_X_MIN;
+        } else if (x > GROWTH_TAB_SAFE_X_MAX) {
+            x = GROWTH_TAB_SAFE_X_MAX;
         }
         if (y < GROWTH_TAB_SAFE_Y_MIN) {
             y = GROWTH_TAB_SAFE_Y_MIN;
         } else if (y > GROWTH_TAB_SAFE_Y_MAX) {
             y = GROWTH_TAB_SAFE_Y_MAX;
         }
-        return new PointData(x, y);
+        AreaData jitter = new AreaData(
+                new PointData(Math.max(GROWTH_TAB_SAFE_X_MIN, x - 24), GROWTH_TAB_SAFE_Y_MIN),
+                new PointData(Math.min(GROWTH_TAB_SAFE_X_MAX, x + 24), GROWTH_TAB_SAFE_Y_MAX));
+        this.tapInside(jitter);
+    }
+
+    /**
+     * Locate Growth on {@link #MISSIONS_TAB_BAR_AREA}. Prefer Debugging-style full-strip
+     * OCR (live sliding windows returned garbage like "eeee"/"cl" while Debug read Growth).
+     * Sliding windows only accept Growth-like text; else word-order heuristic places the tap.
+     */
+    private Optional<AreaData> findGrowthTabTapAreaByOcr() {
+        this.emuManager.captureScreen(this.EMULATOR_NUMBER);
+
+        String fullStrip = this.readTabBarBestText(MISSIONS_TAB_BAR_AREA);
+        if (fullStrip != null && !fullStrip.isBlank()) {
+            this.logInfo(this.logLine("Tab-strip OCR: \"" + fullStrip + "\""));
+        }
+
+        List<TabOcrHit> hits = new ArrayList<>();
+        int barLeft = MISSIONS_TAB_BAR_AREA.topLeft().getX();
+        int barRight = MISSIONS_TAB_BAR_AREA.bottomRight().getX();
+        int barTop = TAB_OCR_LABEL_Y_MIN;
+        int barBottom = TAB_OCR_LABEL_Y_MAX;
+        for (int left = barLeft; left + TAB_OCR_WINDOW_WIDTH <= barRight; left += TAB_OCR_WINDOW_STEP) {
+            int right = left + TAB_OCR_WINDOW_WIDTH;
+            AreaData window = new AreaData(new PointData(left, barTop), new PointData(right, barBottom));
+            // Only keep windows that actually read as Growth — ignore OCR garbage.
+            Optional<String> growth = this.readTabBarGrowthLabel(window);
+            if (growth.isEmpty()) {
+                continue;
+            }
+            this.logDebug(this.logLine(String.format(Locale.ROOT,
+                    "Tab OCR Growth window [%d,%d]: \"%s\"", left, right, growth.get())));
+            hits.add(new TabOcrHit(left, right, growth.get()));
+        }
+        int lastLeft = Math.max(barLeft, barRight - TAB_OCR_WINDOW_WIDTH);
+        if (hits.isEmpty() || hits.get(hits.size() - 1).left() != lastLeft) {
+            AreaData tail = new AreaData(new PointData(lastLeft, barTop), new PointData(barRight, barBottom));
+            Optional<String> growth = this.readTabBarGrowthLabel(tail);
+            if (growth.isPresent()) {
+                hits.add(new TabOcrHit(lastLeft, barRight, growth.get()));
+            }
+        }
+        Optional<TabOcrHit> best = pickGrowthTabHit(hits);
+        if (best.isPresent()) {
+            return Optional.of(jitterAreaForTabHit(best.get()));
+        }
+
+        Optional<AreaData> fromFull = tapAreaFromTabStripText(fullStrip, MISSIONS_TAB_BAR_AREA);
+        if (fromFull.isPresent()) {
+            this.logInfo(this.logLine("Tab-strip OCR placed Growth via word order — jitter "
+                    + fromFull.get()));
+            return fromFull;
+        }
+        this.logWarning(this.logLine("Tab-bar OCR found no Growth label (windows="
+                + hits.size() + ", strip=\"" + (fullStrip == null ? "" : fullStrip) + "\")"));
+        return Optional.empty();
+    }
+
+    /**
+     * Shrinks the OCR window horizontally (neighbor-tab margin) and clamps Y to the
+     * safe pill band so {@link #tapInside(AreaData)} can randomize without Heroes nav.
+     */
+    static AreaData jitterAreaForTabHit(TabOcrHit hit) {
+        int left = hit.left() + TAB_OCR_TAP_INSET_X;
+        int right = hit.right() - TAB_OCR_TAP_INSET_X;
+        if (right - left < 24) {
+            int center = (hit.left() + hit.right()) / 2;
+            left = center - 12;
+            right = center + 12;
+        }
+        if (left < GROWTH_TAB_SAFE_X_MIN) {
+            left = GROWTH_TAB_SAFE_X_MIN;
+        }
+        if (right > GROWTH_TAB_SAFE_X_MAX) {
+            right = GROWTH_TAB_SAFE_X_MAX;
+        }
+        if (right <= left) {
+            right = left + 16;
+        }
+        return new AreaData(
+                new PointData(left, GROWTH_TAB_SAFE_Y_MIN),
+                new PointData(right, GROWTH_TAB_SAFE_Y_MAX));
+    }
+
+    /** All non-blank OCR candidates for an area (Debug-like default + presets). */
+    private List<String> readTabBarOcrCandidates(AreaData area) {
+        List<String> out = new ArrayList<>();
+        try {
+            // Same path Debugging uses conceptually: no colour filter / whitelist.
+            String text = this.emuManager.readText(
+                    this.EMULATOR_NUMBER, area.topLeft(), area.bottomRight());
+            addNormalizedOcrCandidate(out, text);
+        } catch (Exception exception) {
+            this.logDebug(this.logLine("Tab OCR default read failed on " + area + ": " + exception.getMessage()));
+        }
+        OcrSettingsData[] presets = new OcrSettingsData[]{
+                TAB_PLAIN_OCR_SETTINGS,
+                LeftMenuTextSettings.WHITE_SETTINGS,
+                TAB_DARK_TEXT_SETTINGS,
+                LeftMenuTextSettings.ORANGE_SETTINGS};
+        for (OcrSettingsData preset : presets) {
+            try {
+                String text = this.emuManager.readText(
+                        this.EMULATOR_NUMBER, area.topLeft(), area.bottomRight(), preset, true);
+                addNormalizedOcrCandidate(out, text);
+            } catch (Exception exception) {
+                this.logDebug(this.logLine("Tab OCR failed on " + area + ": " + exception.getMessage()));
+            }
+        }
+        return out;
+    }
+
+    private static void addNormalizedOcrCandidate(List<String> out, String text) {
+        if (text == null || text.isBlank()) {
+            return;
+        }
+        String normalized = text.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9 ]", " ");
+        normalized = normalized.replaceAll("\\s+", " ").trim();
+        if (normalized.isBlank()) {
+            return;
+        }
+        if (!out.contains(normalized)) {
+            out.add(normalized);
+        }
+        // Map near-misses onto the known Mission tab vocabulary (Daily/Growth/Chapter).
+        String canonical = canonicalizeMissionTabOcr(normalized);
+        if (!canonical.isBlank() && !out.contains(canonical)) {
+            out.add(canonical);
+        }
+    }
+
+    private String readTabBarBestText(AreaData area) {
+        List<String> candidates = this.readTabBarOcrCandidates(area);
+        for (String candidate : candidates) {
+            if (looksLikeGrowthLabel(candidate)) {
+                return candidate;
+            }
+        }
+        return candidates.isEmpty() ? null : candidates.get(0);
+    }
+
+    /** Only returns text when a candidate looks like Growth — never OCR garbage. */
+    private Optional<String> readTabBarGrowthLabel(AreaData area) {
+        for (String candidate : this.readTabBarOcrCandidates(area)) {
+            if (looksLikeGrowthLabel(candidate)) {
+                return Optional.of(candidate);
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * When sliding windows fail, place Growth from left-to-right tab words in the
+     * full-strip OCR (Chapter|Growth → right slot; Daily|Growth|Chapter → middle).
+     */
+    static Optional<AreaData> tapAreaFromTabStripText(String normalized, AreaData bar) {
+        if (normalized == null || !looksLikeGrowthLabel(normalized)) {
+            return Optional.empty();
+        }
+        List<TabToken> tokens = new ArrayList<>();
+        addTabToken(tokens, normalized, "daily");
+        addTabToken(tokens, normalized, "growth");
+        addTabToken(tokens, normalized, "growt");
+        addTabToken(tokens, normalized, "grwth");
+        addTabToken(tokens, normalized, "chapter");
+        // Collapse growth truncations to one Growth token (earliest index).
+        TabToken growth = null;
+        List<TabToken> ordered = new ArrayList<>();
+        for (TabToken token : tokens.stream()
+                .sorted((a, b) -> Integer.compare(a.index(), b.index()))
+                .toList()) {
+            if (token.name().startsWith("grow")) {
+                if (growth == null) {
+                    growth = new TabToken("growth", token.index());
+                    ordered.add(growth);
+                }
+                continue;
+            }
+            ordered.add(token);
+        }
+        if (growth == null) {
+            return Optional.empty();
+        }
+        int slot = ordered.indexOf(growth);
+        int slots = Math.max(1, ordered.size());
+        int barLeft = bar.topLeft().getX();
+        int barRight = bar.bottomRight().getX();
+        int slotWidth = Math.max(80, (barRight - barLeft) / slots);
+        int left = barLeft + slot * slotWidth + TAB_OCR_TAP_INSET_X;
+        int right = barLeft + (slot + 1) * slotWidth - TAB_OCR_TAP_INSET_X;
+        if (right - left < 24) {
+            int center = (left + right) / 2;
+            left = center - 12;
+            right = center + 12;
+        }
+        left = Math.max(GROWTH_TAB_SAFE_X_MIN, left);
+        right = Math.min(GROWTH_TAB_SAFE_X_MAX, right);
+        if (right <= left) {
+            right = left + 16;
+        }
+        return Optional.of(new AreaData(
+                new PointData(left, GROWTH_TAB_SAFE_Y_MIN),
+                new PointData(right, GROWTH_TAB_SAFE_Y_MAX)));
+    }
+
+    private static void addTabToken(List<TabToken> tokens, String normalized, String word) {
+        int idx = normalized.indexOf(word);
+        if (idx >= 0) {
+            tokens.add(new TabToken(word, idx));
+        }
+    }
+
+    private record TabToken(String name, int index) {
+    }
+
+    /**
+     * Picks the OCR window that best matches Growth alone. Mixed reads like
+     * "chapter growth" are penalized so the jitter area stays on the Growth pill.
+     */
+    static Optional<TabOcrHit> pickGrowthTabHit(List<TabOcrHit> hits) {
+        TabOcrHit best = null;
+        int bestScore = Integer.MAX_VALUE;
+        for (TabOcrHit hit : hits) {
+            if (!looksLikeGrowthLabel(hit.normalized())) {
+                continue;
+            }
+            int score = hit.normalized().length();
+            if (hit.normalized().contains("chapter") || hit.normalized().contains("daily")) {
+                score += 50;
+            }
+            if (best == null || score < bestScore) {
+                best = hit;
+                bestScore = score;
+            }
+        }
+        return Optional.ofNullable(best);
     }
 
     private boolean isMissionsPanelOpen() {
         if (this.isOnGrowthMissions() || this.isOnDailyMissions()) {
             return true;
         }
-        return this.templateSearchHelper.locatePattern(TemplatesEnum.GROWTH_MISSION_GROWTH_TAB_UNSELECTED, GROWTH_TAB_SEARCH).isFound() || this.templateSearchHelper.locatePattern(TemplatesEnum.GROWTH_MISSION_GROWTH_TAB_SELECTED, GROWTH_TAB_SEARCH).isFound();
+        if (this.templateSearchHelper.locatePattern(TemplatesEnum.GROWTH_MISSION_GROWTH_TAB_UNSELECTED, GROWTH_TAB_SEARCH).isFound()
+                || this.templateSearchHelper.locatePattern(TemplatesEnum.GROWTH_MISSION_GROWTH_TAB_SELECTED, GROWTH_TAB_SEARCH).isFound()) {
+            return true;
+        }
+        // Chapter-only early cities have neither Daily title nor Growth title yet.
+        this.emuManager.captureScreen(this.EMULATOR_NUMBER);
+        return this.ocrAreaLooksLike(MISSIONS_TAB_BAR_AREA, text ->
+                looksLikeGrowthLabel(text)
+                        || text.contains("daily")
+                        || text.contains("chapter"));
+    }
+
+    record TabOcrHit(int left, int right, String normalized) {
     }
 
     private boolean isOnDailyMissions() {
@@ -479,7 +781,149 @@ extends DelayedTask {
     }
 
     private boolean isOnGrowthMissions() {
-        return this.templateSearchHelper.locatePattern(TemplatesEnum.GROWTH_MISSION_SCREEN_TITLE, GROWTH_TITLE_SEARCH).isFound();
+        if (this.templateSearchHelper.locatePattern(
+                TemplatesEnum.GROWTH_MISSION_SCREEN_TITLE, GROWTH_TITLE_SEARCH).isFound()) {
+            return true;
+        }
+        // Title template flakes on some skins — OCR the header for "Growth".
+        if (this.ocrAreaLooksLike(GROWTH_TITLE_AREA, GrowthMissionBuildRoutine::looksLikeGrowthLabel)) {
+            this.logInfo(this.logLine("Growth title template missed — OCR confirmed Growth header"));
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Reads {@code area} with white/orange alphabetic presets. Returns true when any
+     * normalized OCR string matches {@code matcher}.
+     */
+    private boolean ocrAreaLooksLike(AreaData area, java.util.function.Predicate<String> matcher) {
+        OcrSettingsData[] presets = new OcrSettingsData[]{
+                LeftMenuTextSettings.WHITE_SETTINGS,
+                LeftMenuTextSettings.ORANGE_SETTINGS};
+        for (OcrSettingsData preset : presets) {
+            try {
+                String text = this.emuManager.readText(
+                        this.EMULATOR_NUMBER, area.topLeft(), area.bottomRight(), preset, true);
+                if (text == null || text.isBlank()) {
+                    continue;
+                }
+                String normalized = text.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9 ]", " ");
+                normalized = normalized.replaceAll("\\s+", " ").trim();
+                if (matcher.test(normalized)) {
+                    this.logDebug(this.logLine("OCR match in " + area + ": \"" + text.trim() + "\""));
+                    return true;
+                }
+            } catch (Exception exception) {
+                this.logDebug(this.logLine("OCR read failed on " + area + ": " + exception.getMessage()));
+            }
+        }
+        return false;
+    }
+
+    /** Known Missions bottom-tab labels — OCR is biased toward these words only. */
+    private static final String[] MISSION_TAB_LABELS = {"daily", "growth", "chapter"};
+
+    /**
+     * Rewrites OCR tokens onto {@link #MISSION_TAB_LABELS} when close (edit distance).
+     * "growlh"→growth, "chapler"→chapter. Junk like "s" / "eeee" stays unmatched.
+     */
+    static String canonicalizeMissionTabOcr(String normalizedLower) {
+        if (normalizedLower == null || normalizedLower.isBlank()) {
+            return "";
+        }
+        StringBuilder out = new StringBuilder();
+        for (String token : normalizedLower.split(" ")) {
+            if (token == null || token.isBlank()) {
+                continue;
+            }
+            String mapped = closestMissionTabLabel(token).orElse(token);
+            if (out.length() > 0) {
+                out.append(' ');
+            }
+            out.append(mapped);
+        }
+        return out.toString();
+    }
+
+    static Optional<String> closestMissionTabLabel(String token) {
+        if (token == null || token.length() < 4) {
+            return Optional.empty();
+        }
+        for (String label : MISSION_TAB_LABELS) {
+            if (label.equals(token) || label.startsWith(token) || token.startsWith(label)) {
+                return Optional.of(label);
+            }
+        }
+        String best = null;
+        int bestDistance = Integer.MAX_VALUE;
+        for (String label : MISSION_TAB_LABELS) {
+            int distance = editDistance(token, label);
+            int maxAllowed = label.length() <= 5 ? 1 : 2;
+            if (distance <= maxAllowed && distance < bestDistance) {
+                bestDistance = distance;
+                best = label;
+            }
+        }
+        return Optional.ofNullable(best);
+    }
+
+    static int editDistance(String left, String right) {
+        int n = left.length();
+        int m = right.length();
+        int[] prev = new int[m + 1];
+        int[] cur = new int[m + 1];
+        for (int j = 0; j <= m; ++j) {
+            prev[j] = j;
+        }
+        for (int i = 1; i <= n; ++i) {
+            cur[0] = i;
+            char a = left.charAt(i - 1);
+            for (int j = 1; j <= m; ++j) {
+                int cost = a == right.charAt(j - 1) ? 0 : 1;
+                cur[j] = Math.min(Math.min(cur[j - 1] + 1, prev[j] + 1), prev[j - 1] + cost);
+            }
+            int[] swap = prev;
+            prev = cur;
+            cur = swap;
+        }
+        return prev[m];
+    }
+
+    /** Header / left-tab label — exact Growth plus near-miss OCR mapped to Growth. */
+    static boolean looksLikeGrowthLabel(String normalizedLower) {
+        if (normalizedLower == null || normalizedLower.isBlank()) {
+            return false;
+        }
+        if (normalizedLower.contains("growth")
+                || normalizedLower.contains("growt")
+                || normalizedLower.contains("grwth")) {
+            return true;
+        }
+        return canonicalizeMissionTabOcr(normalizedLower).contains("growth");
+    }
+
+    /** Main mission green Claim pill. */
+    static boolean looksLikeClaimLabel(String normalizedLower) {
+        return normalizedLower != null && normalizedLower.contains("claim");
+    }
+
+    /**
+     * Main mission blue Go pill. Reject Claim so a Claim-row OCR does not fire Go.
+     * Accept short "go" / "g0" reads from the compact button crop.
+     */
+    static boolean looksLikeGoLabel(String normalizedLower) {
+        if (normalizedLower == null || normalizedLower.isBlank()) {
+            return false;
+        }
+        if (normalizedLower.contains("claim")) {
+            return false;
+        }
+        String spaced = (" " + normalizedLower + " ").replaceAll("\\s+", " ");
+        return spaced.contains(" go ")
+                || spaced.contains(" g0 ")
+                || normalizedLower.equals("go")
+                || normalizedLower.equals("g0");
     }
 
     private boolean isDailyTabSelected() {
@@ -487,6 +931,12 @@ extends DelayedTask {
     }
 
     private UpgradeOutcome performBuildingUpgrades() {
+        // Furnace before furniture: panel title is specific; furniture marker must not steal it.
+        FurnacePanelDetector.Evidence furnace = this.inspectFurnacePanel();
+        if (furnace.panelVisible()) {
+            this.logInfo(this.logLine("Furnace panel detected — taking furnace road (" + furnace + ")"));
+            return this.runFurnaceRoad(furnace);
+        }
         // Identify the furniture panel before any center dismiss so we do not tap blindly.
         boolean furniturePanel = this.isFurniturePanelOpen();
         if (furniturePanel) {
@@ -494,15 +944,73 @@ extends DelayedTask {
             // Furniture missions have no guide-hand overlay; center dismiss is building-road only.
             return this.runFurnitureRoad();
         }
-        this.logInfo(this.logLine("No furniture panel marker — taking building road"));
+        this.logInfo(this.logLine("No furnace/furniture panel — taking building road"));
         return this.runBuildingRoad();
+    }
+
+    private FurnacePanelDetector.Evidence inspectFurnacePanel() {
+        return FurnacePanelDetector.inspect((template, area, threshold) ->
+                this.templateSearchHelper.locatePattern(template,
+                        TemplateSearchHelper.SearchConfig.builder()
+                                .withMaxAttempts(1)
+                                .withThreshold(threshold)
+                                .withArea(area)
+                                .build()));
+    }
+
+    /**
+     * Furnace Growth mission: {@link FurnacePanelDetector} proves identity. Upgrade control
+     * may be the orange furnace entry or the same blue Upgrade as completed furniture.
+     */
+    private UpgradeOutcome runFurnaceRoad(FurnacePanelDetector.Evidence evidence) {
+        ImageSearchResultData upgrade = this.resolveFurnaceUpgradeControl(evidence);
+        if (upgrade == null || !upgrade.isFound()) {
+            this.logWarning(this.logLine(
+                    "Furnace panel visible but no Upgrade control matched — aborting furnace road"));
+            return new UpgradeOutcome(false, false, false, false);
+        }
+        this.logInfo(this.logLine(String.format(Locale.ROOT,
+                "Furnace road: tapping Upgrade at %s (score %.1f)",
+                upgrade.getPoint(), upgrade.getMatchScore())));
+        boolean started = this.confirmBuildingUpgrade(upgrade);
+        return new UpgradeOutcome(started, false, false, false);
+    }
+
+    /** Prefer detector Upgrade; else Growth header / furniture Upgrade in the furnace band. */
+    private ImageSearchResultData resolveFurnaceUpgradeControl(FurnacePanelDetector.Evidence evidence) {
+        if (evidence.actionable()) {
+            this.logInfo(this.logLine("Furnace road: using FurnacePanelDetector Upgrade"));
+            return evidence.upgrade();
+        }
+        ImageSearchResultData header = this.findHeaderUpgrade();
+        if (header.isFound()) {
+            this.logInfo(this.logLine(
+                    "Furnace road: detector Upgrade miss — using Growth header Upgrade (completed-furniture style)"));
+            return header;
+        }
+        ImageSearchResultData furnitureStyle = this.templateSearchHelper.locatePattern(
+                TemplatesEnum.GROWTH_MISSION_BUILDING_FURNITURE_UPGRADE,
+                TemplateSearchHelper.SearchConfig.builder()
+                        .withMaxAttempts(2)
+                        .withDelay(200L)
+                        .withThreshold(88)
+                        .withArea(CommonGameAreas.FURNACE_PANEL_UPGRADE)
+                        .build());
+        if (furnitureStyle.isFound()) {
+            this.logInfo(this.logLine(
+                    "Furnace road: using furniture-style Upgrade in furnace button band"));
+            return furnitureStyle;
+        }
+        this.logInfo(this.logLine("Furnace road: " + evidence
+                + "; header/furniture Upgrade also missed"));
+        return ImageSearchResultData.miss();
     }
 
     /**
      * Furniture mission loop:
      * <ul>
      *   <li>Save-steel (default): single Upgrade taps, Next between pieces, refuse steel cost.</li>
-     *   <li>Fast hold: repeated 2s Upgrade holds; after each release only check main header Upgrade (and Next).</li>
+     *   <li>Fast hold: inspect main Upgrade and Next first; only then 2s piece holds.</li>
      *   <li>When every piece is done, header Upgrade upgrades the building (confirm OK).</li>
      * </ul>
      */
@@ -511,7 +1019,7 @@ extends DelayedTask {
             this.logInfo(this.logLine("Furniture road: save-steel mode (single taps)"));
             return this.runFurnitureRoadSaveSteel();
         }
-        this.logInfo(this.logLine("Furniture road: fast hold mode (no resource-cost check)"));
+        this.logInfo(this.logLine("Furniture road: fast hold mode (inspect Upgrade/Next before any hold)"));
         return this.runFurnitureRoadFastHold();
     }
 
@@ -572,36 +1080,34 @@ extends DelayedTask {
     }
 
     /**
-     * Hold piece Upgrade in fixed 2s bursts. After every release the only meaningful
-     * check is building header (main) Upgrade — tap+confirm, never hold it. Next is
-     * tapped when a piece hits 100%. No steel/resource-cost inspect in this mode.
+     * Fast furniture: always inspect main (header) Upgrade and Next before any piece
+     * hold. Holds are only for unfinished pieces. Main Upgrade is tap+confirm, never held.
+     * Live Stuart Copy held first when header was already ready but the first inspect missed.
      */
     private UpgradeOutcome runFurnitureRoadFastHold() {
         boolean buildingStarted = false;
         boolean furnitureProgress = false;
         int holds = 0;
 
+        // Settle + preflight so we never 2s-hold when main Upgrade/Next is already up.
+        this.sleepTask(900L);
+        Optional<UpgradeOutcome> preflight = this.tryFastFurnitureInspectActions(0, true);
+        if (preflight.isPresent()) {
+            return preflight.get();
+        }
+
         for (int step = 1; step <= MAX_FURNITURE_STEPS; ++step) {
             this.sleepTask(400L);
 
-            ImageSearchResultData headerUpgrade = this.findHeaderUpgrade();
-            if (headerUpgrade.isFound()) {
-                this.logInfo(this.logLine("Fast furniture: main Upgrade ready after inspect (step "
-                        + step + ") — tap confirm only, no hold"));
-                if (!this.confirmBuildingUpgrade(headerUpgrade)) {
-                    break;
+            Optional<UpgradeOutcome> inspected = this.tryFastFurnitureInspectActions(step, false);
+            if (inspected.isPresent()) {
+                UpgradeOutcome outcome = inspected.get();
+                if (outcome.startedConstruction()) {
+                    return outcome;
                 }
-                buildingStarted = true;
-                break;
-            }
-
-            ImageSearchResultData nextButton = this.findFurnitureNext();
-            if (nextButton.isFound()) {
-                this.logInfo(this.logLine("Fast furniture: Next after hold — tapping "
-                        + nextButton.getPoint() + " (step " + step + ")"));
-                this.tapNear(nextButton.getPoint(), 6);
-                this.sleepTask(1200L);
-                furnitureProgress = true;
+                if (outcome.furnitureProgress()) {
+                    furnitureProgress = true;
+                }
                 continue;
             }
 
@@ -609,6 +1115,19 @@ extends DelayedTask {
             if (!furnitureUpgrade.isFound()) {
                 this.logInfo(this.logLine("Fast furniture: no Upgrade/Next/header (step " + step + ")"));
                 break;
+            }
+
+            // Last look before committing a 2s hold — header can appear as the panel settles.
+            Optional<UpgradeOutcome> beforeHold = this.tryFastFurnitureInspectActions(step, false);
+            if (beforeHold.isPresent()) {
+                UpgradeOutcome outcome = beforeHold.get();
+                if (outcome.startedConstruction()) {
+                    return outcome;
+                }
+                if (outcome.furnitureProgress()) {
+                    furnitureProgress = true;
+                }
+                continue;
             }
 
             if (holds >= FAST_FURNITURE_MAX_HOLDS) {
@@ -629,6 +1148,36 @@ extends DelayedTask {
         }
 
         return new UpgradeOutcome(buildingStarted, false, furnitureProgress, false);
+    }
+
+    /**
+     * Inspect-only actions for fast furniture: main Upgrade (start building) or Next
+     * (piece complete). Empty = neither ready, caller may hold a piece Upgrade.
+     */
+    private Optional<UpgradeOutcome> tryFastFurnitureInspectActions(int step, boolean preflight) {
+        String phase = preflight ? "preflight" : ("step " + step);
+        ImageSearchResultData headerUpgrade = this.findHeaderUpgrade();
+        if (headerUpgrade.isFound()) {
+            this.logInfo(this.logLine("Fast furniture: main Upgrade ready (" + phase
+                    + ") — tap confirm only, no hold"));
+            if (!this.confirmBuildingUpgrade(headerUpgrade)) {
+                return Optional.of(new UpgradeOutcome(false, false, false, false));
+            }
+            return Optional.of(new UpgradeOutcome(true, false, false, false));
+        }
+
+        ImageSearchResultData nextButton = this.findFurnitureNext();
+        if (nextButton.isFound()) {
+            this.logInfo(this.logLine("Fast furniture: Next ready (" + phase + ") — tapping "
+                    + nextButton.getPoint()));
+            this.tapNear(nextButton.getPoint(), 6);
+            this.sleepTask(1200L);
+            return Optional.of(new UpgradeOutcome(false, false, true, false));
+        }
+        if (preflight) {
+            this.logInfo(this.logLine("Fast furniture: preflight — no main Upgrade/Next yet"));
+        }
+        return Optional.empty();
     }
 
     /** Piece Upgrade only; reject hits in the building header band. */
@@ -963,9 +1512,7 @@ extends DelayedTask {
                 new RepeatedResourceReplenishmentFlow.Ui() {
                     @Override
                     public PointData findReplenishAll() {
-                        ImageSearchResultData hit = templateSearchHelper.locatePattern(
-                                TemplatesEnum.REPLENISH_ALL_BUTTON, REPLENISH_BUTTON_RECHECK);
-                        return hit.isFound() ? hit.getPoint() : null;
+                        return findReplenishAllButton();
                     }
 
                     @Override
@@ -978,8 +1525,17 @@ extends DelayedTask {
 
                     @Override
                     public void openObtain(PointData point) {
+                        logInfo(logLine("Opening Obtain more for missing Growth resources at " + point));
                         tapNear(point);
-                        sleepTask(500L);
+                        sleepTask(1200L);
+                        emuManager.captureScreen(EMULATOR_NUMBER);
+                    }
+
+                    @Override
+                    public void waitAfterObtainOpened(int attempt) {
+                        logInfo(logLine("Waiting for Replenish All after Obtain (poll " + attempt + ")"));
+                        sleepTask(700L);
+                        emuManager.captureScreen(EMULATOR_NUMBER);
                     }
 
                     @Override
@@ -998,6 +1554,70 @@ extends DelayedTask {
         return result.ready();
     }
 
+    /**
+     * Locate bottom-sheet Replenish All after Obtain. Stuart Copy missed the tight
+     * 90% band within 500ms — widen, relax, multi-scale, then OCR.
+     */
+    private PointData findReplenishAllButton() {
+        this.emuManager.captureScreen(this.EMULATOR_NUMBER);
+        ImageSearchResultData hit = this.templateSearchHelper.locatePattern(
+                TemplatesEnum.REPLENISH_ALL_BUTTON, REPLENISH_BUTTON_RECHECK);
+        if (hit.isFound()) {
+            return hit.getPoint();
+        }
+        hit = this.templateSearchHelper.locatePattern(
+                TemplatesEnum.REPLENISH_ALL_BUTTON, REPLENISH_BUTTON_RELAXED);
+        if (hit.isFound()) {
+            this.logInfo(this.logLine(String.format(Locale.ROOT,
+                    "Replenish All matched relaxed template at %s (score %.1f)",
+                    hit.getPoint(), hit.getMatchScore())));
+            return hit.getPoint();
+        }
+        hit = this.templateSearchHelper.locatePatternMultiScale(
+                TemplatesEnum.REPLENISH_ALL_BUTTON, REPLENISH_BUTTON_RELAXED);
+        if (hit != null && hit.isFound()) {
+            this.logInfo(this.logLine(String.format(Locale.ROOT,
+                    "Replenish All matched multi-scale at %s (score %.1f)",
+                    hit.getPoint(), hit.getMatchScore())));
+            return hit.getPoint();
+        }
+        Optional<PointData> ocrTap = this.findReplenishAllByOcr();
+        if (ocrTap.isPresent()) {
+            return ocrTap.get();
+        }
+        ImageSearchResultData probe = this.templateSearchHelper.locatePattern(
+                TemplatesEnum.REPLENISH_ALL_BUTTON, REPLENISH_BUTTON_SCORE_PROBE);
+        this.logWarning(this.logLine(String.format(Locale.ROOT,
+                "Replenish All not found (best template score %.1f in %s)",
+                probe.getMatchScore(), REPLENISH_ALL_AREA)));
+        return null;
+    }
+
+    /** OCR backup when the Obtain-more sheet shows Replenish All but the template misses. */
+    private Optional<PointData> findReplenishAllByOcr() {
+        try {
+            String text = this.emuManager.readText(
+                    this.EMULATOR_NUMBER,
+                    REPLENISH_ALL_AREA.topLeft(),
+                    REPLENISH_ALL_AREA.bottomRight());
+            if (text == null || text.isBlank()) {
+                return Optional.empty();
+            }
+            String normalized = text.toLowerCase(Locale.ROOT).replaceAll("[^a-z ]", " ");
+            normalized = normalized.replaceAll("\\s+", " ").trim();
+            if (!(normalized.contains("replenish") || normalized.contains("replenishall"))) {
+                this.logDebug(this.logLine("Replenish OCR miss: \"" + text.trim() + "\""));
+                return Optional.empty();
+            }
+            this.logInfo(this.logLine("Replenish All via OCR (\"" + text.trim()
+                    + "\") — tapping " + REPLENISH_ALL_OCR_TAP));
+            return Optional.of(REPLENISH_ALL_OCR_TAP);
+        } catch (Exception exception) {
+            this.logDebug(this.logLine("Replenish OCR error: " + exception.getMessage()));
+            return Optional.empty();
+        }
+    }
+
     private boolean tapAllianceHelp() {
         ImageSearchResultData help = this.templateSearchHelper.locatePatternMultiScale(TemplatesEnum.GAME_HOME_SHORTCUTS_HELP_REQUEST4, SearchConfigConstants.HIGH_SENSITIVITY);
         if (help == null || !help.isFound()) {
@@ -1010,15 +1630,16 @@ extends DelayedTask {
     private void scheduleAfterConstruction() {
         if (!this.tryScheduleFromConstructionQueue("after construction start")) {
             LocalDateTime fallback = LocalDateTime.now().plusMinutes(DEFAULT_RETRY_MINUTES);
-            this.logWarning(this.logLine("Queue timer unreadable. Fallback reschedule at "
-                    + fallback.format(DATETIME_FORMATTER)));
+            this.logWarning(this.logLine(
+                    "No construction timer from CITY sidebar or city-map OCR. "
+                            + "Fixed fallback reschedule at " + fallback.format(DATETIME_FORMATTER)));
             this.reschedule(fallback);
         }
     }
 
     /**
-     * Opens CITY left menu and OCRs construction queue timers. Returns true when a
-     * busy-queue duration was read and Growth was rescheduled for that completion.
+     * Prefer CITY left-menu queue timers; if that path fails (sidebar locked on early
+     * accounts, or unreadable), OCR {@link #CITY_MAP_CONSTRUCTION_TIMER_AREA}.
      */
     private boolean tryScheduleFromConstructionQueue(String reason) {
         // Construction UI needs a moment before the left-menu timer is readable.
@@ -1030,9 +1651,9 @@ extends DelayedTask {
             this.dismissToHome();
         }
         if (!this.navigationHelper.openSidebarSection(SidebarSection.CITY)) {
-            this.logWarning(this.logLine(
-                    "CITY sidebar failed to open for construction timer OCR (" + reason + ")"));
-            return false;
+            this.logInfo(this.logLine(
+                    "CITY sidebar unavailable — trying city-map construction timer OCR (" + reason + ")"));
+            return this.tryScheduleFromCityMapConstructionTimer(reason);
         }
         this.sleepTask(1500L);
 
@@ -1056,6 +1677,33 @@ extends DelayedTask {
         }
 
         this.marchHelper.closeLeftMenu();
+        this.logInfo(this.logLine(
+                "CITY sidebar queue OCR failed — trying city-map construction timer (" + reason + ")"));
+        return this.tryScheduleFromCityMapConstructionTimer(reason);
+    }
+
+    /**
+     * Experimental fallback: OCR a fixed city-map countdown band when sidebar queue
+     * OCR cannot run. Region and reliability still need heavy live testing.
+     */
+    private boolean tryScheduleFromCityMapConstructionTimer(String reason) {
+        for (int attempt = 1; attempt <= CITY_MAP_TIMER_OCR_ATTEMPTS; ++attempt) {
+            this.emuManager.captureScreen(this.EMULATOR_NUMBER);
+            Optional<Duration> wait = this.readQueueDuration(CITY_MAP_CONSTRUCTION_TIMER_AREA, true);
+            if (wait.isPresent()) {
+                LocalDateTime next = LocalDateTime.now().plus(wait.get()).plusSeconds(2L);
+                this.logInfo(this.logLine("City-map construction timer OCR \u2192 next run at "
+                        + next.format(DATETIME_FORMATTER)
+                        + " (attempt " + attempt + "/" + CITY_MAP_TIMER_OCR_ATTEMPTS
+                        + ", " + reason + ") — experimental fallback"));
+                this.reschedule(next);
+                return true;
+            }
+            this.logInfo(this.logLine(
+                    "City-map construction timer OCR miss (attempt " + attempt + "/"
+                            + CITY_MAP_TIMER_OCR_ATTEMPTS + ", " + reason + ")"));
+            this.sleepTask(600L);
+        }
         return false;
     }
 
@@ -1169,6 +1817,7 @@ extends DelayedTask {
         FAILED
     }
 
+
     private record UpgradeOutcome(
             boolean startedConstruction,
             boolean steelBlocked,
@@ -1192,7 +1841,9 @@ extends DelayedTask {
         CITY_UPGRADE_ARROW_SEARCH = TemplateSearchHelper.SearchConfig.builder().withMaxAttempts(4).withDelay(400L).withThreshold(70).withArea(CITY_UPGRADE_ARROW_AREA).build();
         CITY_UPGRADE_ARROW_SCORE_PROBE = TemplateSearchHelper.SearchConfig.builder().withMaxAttempts(1).withThreshold(0).withArea(CITY_UPGRADE_ARROW_AREA).build();
         BUILDING_PANEL_UPGRADE_SEARCH = TemplateSearchHelper.SearchConfig.builder().withMaxAttempts(4).withDelay(400L).withThreshold(78).withArea(BUILDING_PANEL_UPGRADE_AREA).build();
-        REPLENISH_BUTTON_RECHECK = TemplateSearchHelper.SearchConfig.builder().withMaxAttempts(2).withDelay(300L).withThreshold(90).withCoordinates(new PointData(180, 1070), new PointData(535, 1195)).build();
+        REPLENISH_BUTTON_RECHECK = TemplateSearchHelper.SearchConfig.builder().withMaxAttempts(3).withDelay(350L).withThreshold(85).withArea(REPLENISH_ALL_AREA).build();
+        REPLENISH_BUTTON_RELAXED = TemplateSearchHelper.SearchConfig.builder().withMaxAttempts(2).withDelay(300L).withThreshold(78).withArea(REPLENISH_ALL_AREA).build();
+        REPLENISH_BUTTON_SCORE_PROBE = TemplateSearchHelper.SearchConfig.builder().withMaxAttempts(1).withThreshold(0).withArea(REPLENISH_ALL_AREA).build();
         BUILDING_CONFIRM_UPGRADE_SEARCH = TemplateSearchHelper.SearchConfig.builder().withMaxAttempts(5).withDelay(500L).withThreshold(85).withArea(BUILDING_CONFIRM_UPGRADE_AREA).build();
         BUILDING_CONFIRM_UPGRADE_RELAXED = TemplateSearchHelper.SearchConfig.builder().withMaxAttempts(3).withDelay(400L).withThreshold(78).withArea(BUILDING_CONFIRM_UPGRADE_AREA).build();
         BUILDING_CONFIRM_UPGRADE_POSTCONDITION = TemplateSearchHelper.SearchConfig.builder().withMaxAttempts(1).withThreshold(85).withArea(BUILDING_CONFIRM_UPGRADE_AREA).build();

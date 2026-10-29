@@ -21,8 +21,6 @@ import java.time.LocalDateTime;
 // availability gating, item top-ups, and travel time parsing.
 public class StaminaHelper {
 
-    private static final int PROFILE_SCREEN_SETTLE_MS = 800;
-    private static final int STAMINA_DIALOG_SETTLE_MS = 1000;
     private static final int STAMINA_OCR_ATTEMPTS = 5;
     private static final long STAMINA_OCR_RETRY_MS = 200L;
 
@@ -37,13 +35,10 @@ public class StaminaHelper {
     private final String accountLabel;
     private final LoggingService centralLog;
     private final StaminaItemTopUpFlow itemTopUpFlow;
-    private final ProfileStaminaUi profileStaminaUi;
+    private final HudStaminaUi hudStaminaUi;
 
-    interface ProfileStaminaUi {
-        void openProfile(int settleMs) throws Exception;
-        void openStaminaDialog(int settleMs) throws Exception;
+    interface HudStaminaUi {
         Integer readStamina(int attempts, long retryMs) throws Exception;
-        void cleanup() throws Exception;
     }
 
     public StaminaHelper(EmulatorController emuManager, String emulatorNumber,
@@ -64,37 +59,16 @@ public class StaminaHelper {
             persistence.setStamina(accountKey, observed);
             emitInfo("Obtain-more dialog: synchronized tracked stamina " + tracked + " -> " + observed);
         });
-        this.profileStaminaUi = new ProfileStaminaUi() {
-            @Override
-            public void openProfile(int settleMs) {
-                taps.tapInside(CommonGameAreas.PROFILE_AVATAR, 1, settleMs);
-            }
-
-            @Override
-            public void openStaminaDialog(int settleMs) {
-                taps.tapInside(CommonGameAreas.STAMINA_BUTTON, 1, settleMs);
-            }
-
-            @Override
-            public Integer readStamina(int attempts, long retryMs) {
-                return numberReader.attemptRecognition(
-                        CommonGameAreas.STAMINA_OCR_AREA.topLeft(),
-                        CommonGameAreas.STAMINA_OCR_AREA.bottomRight(),
-                        attempts, retryMs,
-                        CommonOCRSettings.STAMINA_FRACTION_SETTINGS,
-                        RegexNumberParser::hasFractionSyntax,
-                        RegexNumberParser::numerator);
-            }
-
-            @Override
-            public void cleanup() {
-                device.pressBack(deviceSlot);
-                device.pressBack(deviceSlot);
-            }
-        };
+        this.hudStaminaUi = (attempts, retryMs) -> numberReader.attemptRecognition(
+                CommonGameAreas.STAMINA_HUD_OCR_AREA.topLeft(),
+                CommonGameAreas.STAMINA_HUD_OCR_AREA.bottomRight(),
+                attempts, retryMs,
+                CommonOCRSettings.STAMINA_HUD_SETTINGS,
+                text -> RegexNumberParser.conformsTo(text, CommonOCRSettings.NUMBER_PATTERN),
+                text -> RegexNumberParser.extractByPattern(text, CommonOCRSettings.NUMBER_PATTERN));
     }
 
-    StaminaHelper(StaminaService persistence, Long accountKey, ProfileStaminaUi profileStaminaUi) {
+    StaminaHelper(StaminaService persistence, Long accountKey, HudStaminaUi hudStaminaUi) {
         this.device = null;
         this.deviceSlot = null;
         this.taps = null;
@@ -106,35 +80,24 @@ public class StaminaHelper {
         this.accountLabel = "test";
         this.centralLog = null;
         this.itemTopUpFlow = null;
-        this.profileStaminaUi = profileStaminaUi;
+        this.hudStaminaUi = hudStaminaUi;
     }
 
-    // Opens avatar screen, reads stamina via bounded OCR retries, persists, then navigates back.
-    public void updateStaminaFromProfile() {
-        emitDebug("Opening profile to read stamina");
+    // Reads the green count under the chief avatar. A miss leaves the stored value unchanged.
+    public void updateStaminaFromHud() {
+        emitDebug("Reading stamina from the city/world badge");
         long startMs = System.currentTimeMillis();
 
         try {
-            profileStaminaUi.openProfile(PROFILE_SCREEN_SETTLE_MS);
-            profileStaminaUi.openStaminaDialog(STAMINA_DIALOG_SETTLE_MS);
-
-            Integer reading = profileStaminaUi.readStamina(STAMINA_OCR_ATTEMPTS, STAMINA_OCR_RETRY_MS);
-
+            Integer reading = hudStaminaUi.readStamina(STAMINA_OCR_ATTEMPTS, STAMINA_OCR_RETRY_MS);
             if (reading == null) {
-                emitWarn("OCR could not parse stamina (elapsed " + (System.currentTimeMillis() - startMs) + "ms)");
+                emitWarn("HUD stamina unreadable (elapsed " + (System.currentTimeMillis() - startMs) + "ms)");
             } else {
-                emitInfo("Stamina read: " + reading);
+                emitInfo("HUD stamina read: " + reading);
                 persistence.setStamina(accountKey, reading);
             }
         } catch (Exception ex) {
-            emitWarn("Stamina update error: " + ex.getMessage());
-        } finally {
-            // Safety navigation back
-            try {
-                profileStaminaUi.cleanup();
-            } catch (Exception ex) {
-                emitDebug("Press-back cleanup error: " + ex.getMessage());
-            }
+            emitWarn("HUD stamina read error: " + ex.getMessage());
         }
     }
 

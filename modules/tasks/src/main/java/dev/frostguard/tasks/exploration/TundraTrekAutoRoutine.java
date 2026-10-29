@@ -6,6 +6,7 @@ import dev.frostguard.api.configs.TpDailyTaskEnum;
 import dev.frostguard.api.domain.AccountDescriptor;
 import dev.frostguard.api.domain.AreaData;
 import dev.frostguard.api.domain.ImageSearchResultData;
+import dev.frostguard.api.domain.OcrSettingsData;
 import dev.frostguard.api.domain.PointData;
 import dev.frostguard.engine.helper.TemplateSearchHelper.SearchConfig;
 import dev.frostguard.engine.nav.SearchConfigConstants;
@@ -14,6 +15,7 @@ import dev.frostguard.engine.schedule.DelayedTask;
 import dev.frostguard.engine.schedule.LaunchPoint;
 import dev.frostguard.vision.convert.GameTimeUtils;
 
+import java.awt.Color;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.regex.Matcher;
@@ -26,10 +28,27 @@ public class TundraTrekAutoRoutine extends DelayedTask {
     private static final PointData TREK_COUNTER_BOTTOM_RIGHT = new PointData(610, 60);
     private static final PointData IDLE_BUTTON_ZONE_TAP = new PointData(630, 1180);
     private static final Duration IDLE_DIALOG_TIMEOUT = Duration.ofSeconds(15);
+    private static final Duration HUD_CLAIM_DIALOG_TIMEOUT = Duration.ofSeconds(12);
+    /** After Idle Trek starts, poll City/World for the post-complete claim icon. */
+    private static final Duration HUD_CLAIM_CHECK_DELAY = Duration.ofMinutes(15);
+
+    private enum HudPassOutcome {
+        /** Claimed End Idle Trek from City/World HUD; long-interval reschedule already set. */
+        CLAIMED,
+        /** Claim attempted but dialog missing; short retry already scheduled. */
+        WAITING,
+        /** Claim icon not on City/World — fall through to Dawn Academy Idle start. */
+        ABSENT
+    }
 
     private static final AreaData IDLE_BUTTON_SEARCH_AREA = AreaData.of(554, 1125, 706, 1236);
     private static final AreaData IDLE_CONFIRM_SEARCH_AREA = AreaData.of(180, 820, 540, 980);
     private static final AreaData END_IDLE_SEARCH_AREA = AreaData.of(80, 650, 640, 1000);
+    /** City/World HUD strip — full width; icon side varies by layout/overlays. */
+    private static final AreaData HUD_ICON_SEARCH_AREA = AreaData.of(0, 120, 720, 1100);
+
+    private static final int HUD_FRACTION_PAD_X = 28;
+    private static final int HUD_FRACTION_HEIGHT = 40;
 
     private static final SearchConfig IDLE_BUTTON_SEARCH = SearchConfig.builder()
             .withMaxAttempts(4)
@@ -49,6 +68,25 @@ public class TundraTrekAutoRoutine extends DelayedTask {
             .withThreshold(82)
             .withArea(END_IDLE_SEARCH_AREA)
             .build();
+    private static final SearchConfig HUD_ICON_SEARCH = SearchConfig.builder()
+            .withMaxAttempts(3)
+            .withDelay(200L)
+            .withThreshold(70)
+            .withArea(HUD_ICON_SEARCH_AREA)
+            .build();
+    private static final SearchConfig HUD_CLAIM_SEARCH = SearchConfig.builder()
+            .withMaxAttempts(3)
+            .withDelay(300L)
+            .withThreshold(80)
+            .withArea(END_IDLE_SEARCH_AREA)
+            .build();
+
+    private static final OcrSettingsData HUD_FRACTION_OCR = OcrSettingsData.assembler()
+            .setTextColor(new Color(255, 255, 255))
+            .stripBackground(true)
+            .charWhitelist("0123456789/")
+            .textLayout(OcrSettingsData.TextLayout.SINGLE_LINE)
+            .build();
 
     private static final int[][] OCR_REGION_OFFSETS = {
             { 0, 0 },
@@ -63,36 +101,205 @@ public class TundraTrekAutoRoutine extends DelayedTask {
     @Override
     protected void execute() {
         try {
+            // Claim only via City/World HUD icon (appears after Idle Trek completes).
+            // Never claim End Idle inside Dawn Academy.
+            HudPassOutcome hudOutcome = evaluateHudClaimPass();
+            if (hudOutcome == HudPassOutcome.CLAIMED || hudOutcome == HudPassOutcome.WAITING) {
+                return;
+            }
+
+            // Icon absent: start Idle Trek the normal way (Daily → Dawn Academy).
+            // Do not sit on the map forever — the claim icon is not shown while Idle runs.
+            if (isAwaitingHudClaim()) {
+                logInfo("HUD claim icon not visible — checking Dawn Academy for Idle start");
+            }
+
             if (!navigateToTundraMenu()) {
                 rescheduleWithDelay(Duration.ofHours(1), "Failed to navigate to Tundra menu");
                 return;
             }
 
-            boolean claimedEndIdle = claimEndIdleTrekIfPresent();
+            if (isEndIdleClaimVisible()) {
+                logInfo("End Idle Trek waiting in-event — marking HUD claim pending and leaving");
+                pressBack();
+                sleepTask(500);
+                setAwaitingHudClaim(true);
+                rescheduleForHudClaimCheck("end-idle waiting for HUD icon claim");
+                return;
+            }
+
             if (checkIfAlreadyComplete()) {
                 return;
             }
 
             if (!startIdleTrek()) {
-                if (claimedEndIdle) {
-                    logInfo("Claimed End Idle Trek; Idle start not available. Rescheduling by interval.");
-                    pressBack();
-                    sleepTask(500);
-                    rescheduleAfterConfiguredInterval("end-idle claimed, start unavailable");
+                // Idle unavailable usually means a run is already active — keep polling HUD.
+                if (isAwaitingHudClaim()) {
+                    rescheduleForHudClaimCheck("Idle start unavailable; keep waiting for HUD claim icon");
                     return;
                 }
-
                 rescheduleWithDelay(Duration.ofHours(1), "Failed to start Idle Trek");
                 return;
             }
 
-            logInfo("Idle Trek started - returning to gameplay. Rescheduling by interval.");
+            logInfo("Idle Trek started - returning to gameplay. Will check HUD claim soon.");
             sleepTask(1500);
-            rescheduleAfterConfiguredInterval("idle started");
+            setAwaitingHudClaim(true);
+            rescheduleForHudClaimCheck("idle started");
         } catch (Exception e) {
             logError("Unexpected error during TundraTrekAuto task: " + e.getMessage(), e);
             rescheduleWithDelay(Duration.ofHours(1), "Unexpected error");
         }
+    }
+
+    /**
+     * City/World HUD path: the map icon appears only when Idle Trek is complete and
+     * ready to claim. Tap icon → End Idle. Does not open Daily / Dawn Academy.
+     */
+    private HudPassOutcome evaluateHudClaimPass() {
+        ImageSearchResultData icon = templateSearchHelper.locatePattern(
+                TemplatesEnum.TUNDRA_TREK_HUD_ICON, HUD_ICON_SEARCH);
+        if (!icon.isFound()) {
+            logInfo(String.format(
+                    "Trek HUD claim icon not visible on City/World (best score %.1f)",
+                    icon.getMatchScore()));
+            return HudPassOutcome.ABSENT;
+        }
+
+        TrekHudProgress progress = readHudProgress(icon);
+        if (progress != null) {
+            logInfo(String.format(
+                    "Trek HUD claim icon at %s with %d/%d",
+                    icon.getPoint(), progress.current(), progress.max()));
+            if (!progress.isComplete()) {
+                // Icon is claim-only; incomplete OCR is treated as a read miss, not in-progress.
+                logInfo("HUD fraction not complete — treating as OCR miss and not claiming yet");
+                return HudPassOutcome.ABSENT;
+            }
+        } else {
+            logInfo(String.format(
+                    "Trek HUD claim icon at %s — tapping for End Idle (fraction OCR unavailable)",
+                    icon.getPoint()));
+        }
+
+        logInfo("Trek HUD claim ready — tapping City/World map icon");
+        return tapHudIconAndClaim(icon);
+    }
+
+    private HudPassOutcome tapHudIconAndClaim(ImageSearchResultData icon) {
+        tapInside(icon);
+        sleepTask(1500);
+
+        if (!claimHudEndIdleIfPresent()) {
+            logWarning("Tapped HUD map icon but End Idle Trek claim button not found — retrying soon");
+            pressBack();
+            sleepTask(500);
+            setAwaitingHudClaim(true);
+            rescheduleForHudClaimCheck("HUD claim button missing after map icon tap");
+            return HudPassOutcome.WAITING;
+        }
+
+        tapNear(UPPER_SCREEN_CLICK);
+        sleepTask(1000);
+        pressBack();
+        sleepTask(500);
+        setAwaitingHudClaim(false);
+        rescheduleAfterConfiguredInterval("HUD trek claimed");
+        return HudPassOutcome.CLAIMED;
+    }
+
+    private boolean isAwaitingHudClaim() {
+        Boolean awaiting = profile.getConfig(
+                ConfigurationKeyEnum.TUNDRA_TREK_AWAITING_HUD_CLAIM_BOOL, Boolean.class);
+        return Boolean.TRUE.equals(awaiting);
+    }
+
+    private void setAwaitingHudClaim(boolean awaiting) {
+        profile.setConfig(ConfigurationKeyEnum.TUNDRA_TREK_AWAITING_HUD_CLAIM_BOOL, awaiting);
+        shouldUpdateConfig = true;
+    }
+
+    private TrekHudProgress readHudProgress(ImageSearchResultData icon) {
+        AreaData fractionArea = fractionAreaBelowIcon(icon);
+        if (fractionArea == null) {
+            return null;
+        }
+
+        for (int[] offset : OCR_REGION_OFFSETS) {
+            PointData topLeft = new PointData(
+                    fractionArea.topLeft().getX() + offset[0],
+                    fractionArea.topLeft().getY() + offset[1]);
+            PointData bottomRight = new PointData(
+                    fractionArea.bottomRight().getX() + offset[0],
+                    fractionArea.bottomRight().getY() + offset[1]);
+            try {
+                String raw = emuManager.readText(
+                        EMULATOR_NUMBER, topLeft, bottomRight, HUD_FRACTION_OCR);
+                TrekHudProgress parsed = TrekHudProgressParser.parse(raw);
+                if (parsed != null) {
+                    return parsed;
+                }
+                // Fallback without colour isolation when the HUD label is not pure white.
+                raw = emuManager.readText(EMULATOR_NUMBER, topLeft, bottomRight);
+                parsed = TrekHudProgressParser.parse(raw);
+                if (parsed != null) {
+                    return parsed;
+                }
+            } catch (Exception e) {
+                logDebug("HUD fraction OCR failed at offset ("
+                        + offset[0] + "," + offset[1] + "): " + e.getMessage());
+            }
+        }
+        return null;
+    }
+
+    static AreaData fractionAreaBelowIcon(ImageSearchResultData icon) {
+        AreaData matched = icon != null ? icon.getMatchedArea() : null;
+        if (matched == null) {
+            PointData center = icon != null ? icon.getPoint() : null;
+            if (center == null) {
+                return null;
+            }
+            int halfW = 30;
+            int halfH = 24;
+            matched = AreaData.of(
+                    center.getX() - halfW,
+                    center.getY() - halfH,
+                    center.getX() + halfW,
+                    center.getY() + halfH);
+        }
+
+        int left = Math.max(0, matched.topLeft().getX() - HUD_FRACTION_PAD_X);
+        int right = Math.min(719, matched.bottomRight().getX() + HUD_FRACTION_PAD_X);
+        int top = matched.bottomRight().getY() + 1;
+        int bottom = Math.min(1279, top + HUD_FRACTION_HEIGHT);
+        if (bottom <= top || right <= left) {
+            return null;
+        }
+        return AreaData.of(left, top, right, bottom);
+    }
+
+    private boolean claimHudEndIdleIfPresent() {
+        LocalDateTime deadline = LocalDateTime.now().plus(HUD_CLAIM_DIALOG_TIMEOUT);
+        while (LocalDateTime.now().isBefore(deadline)) {
+            ImageSearchResultData claimBtn = templateSearchHelper.locatePattern(
+                    TemplatesEnum.TUNDRA_TREK_HUD_CLAIM, HUD_CLAIM_SEARCH);
+            if (!claimBtn.isFound()) {
+                claimBtn = templateSearchHelper.locatePattern(
+                        TemplatesEnum.TUNDRA_TREK_END_IDLE, END_IDLE_SEARCH);
+            }
+            if (claimBtn.isFound()) {
+                logInfo(String.format(
+                        "End Idle Trek claim at %s (score %.1f)",
+                        claimBtn.getPoint(),
+                        claimBtn.getMatchScore()));
+                tapInside(claimBtn);
+                sleepTask(2000);
+                return true;
+            }
+            sleepTask(700);
+        }
+        return false;
     }
 
     private boolean navigateToTundraMenu() {
@@ -160,15 +367,15 @@ public class TundraTrekAutoRoutine extends DelayedTask {
             return false;
         }
 
-        logInfo("Trek already complete (0/100). Exiting event.");
+        logInfo("Trek already complete (0/100). Leaving event for City/World HUD claim.");
         pressBack();
         sleepTask(500);
-        rescheduleAfterConfiguredInterval("already complete");
+        setAwaitingHudClaim(true);
+        rescheduleForHudClaimCheck("in-event counter already complete");
         return true;
     }
 
-    private boolean claimEndIdleTrekIfPresent() {
-        logInfo("Checking for End Idle Trek claim button");
+    private boolean isEndIdleClaimVisible() {
         ImageSearchResultData claimBtn = templateSearchHelper.locatePattern(
                 TemplatesEnum.TUNDRA_TREK_END_IDLE,
                 END_IDLE_SEARCH);
@@ -176,15 +383,10 @@ public class TundraTrekAutoRoutine extends DelayedTask {
             logDebug(String.format("End Idle Trek not visible (best score %.1f)", claimBtn.getMatchScore()));
             return false;
         }
-
         logInfo(String.format(
-                "End Idle Trek found at %s (score %.1f) - claiming",
+                "End Idle Trek visible at %s (score %.1f) — not claiming here",
                 claimBtn.getPoint(),
                 claimBtn.getMatchScore()));
-        tapInside(claimBtn);
-        sleepTask(2000);
-        tapNear(UPPER_SCREEN_CLICK);
-        sleepTask(1500);
         return true;
     }
 
@@ -423,6 +625,14 @@ public class TundraTrekAutoRoutine extends DelayedTask {
     private void rescheduleWithDelay(Duration delay, String reason) {
         LocalDateTime nextExecution = LocalDateTime.now().plus(delay);
         logWarning(reason + ". Rescheduling for " + nextExecution);
+        reschedule(nextExecution);
+    }
+
+    private void rescheduleForHudClaimCheck(String outcome) {
+        setAwaitingHudClaim(true);
+        LocalDateTime nextExecution = LocalDateTime.now().plus(HUD_CLAIM_CHECK_DELAY);
+        logInfo("Trek " + outcome + ". Next HUD claim check at " + nextExecution
+                + " (in " + HUD_CLAIM_CHECK_DELAY.toMinutes() + " min)");
         reschedule(nextExecution);
     }
 

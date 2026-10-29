@@ -34,11 +34,29 @@ class StorehouseStaminaClaimFlowTest {
         assertNotNull(result.claimButton());
         assertSame(CLAIM_BUTTON, result.claimButton());
         assertEquals(1, actions.backPresses);
-        assertEquals(2, actions.rewardDialogChecks);
+        assertEquals(1, actions.rewardDialogChecks);
         assertEquals(1, actions.claimButtonChecks);
         assertEquals(1, actions.tooltipChecks);
         assertEquals(1, actions.waitsAfterBack);
         assertEquals(0, actions.regularWaits);
+    }
+
+    @Test
+    void acceptsClaimControlEvenWhenRewardTitleNeverMatches() {
+        ScriptedActions actions = new ScriptedActions()
+                .rewardDialog(false, false)
+                .claimButtons(missed(), CLAIM_BUTTON)
+                .tooltips(false, false);
+
+        StorehouseStaminaClaimFlow.Result result = StorehouseStaminaClaimFlow.awaitClaimButton(
+                actions, ONE_SECOND, actions.clock::get);
+
+        assertNotNull(result.claimButton());
+        assertSame(CLAIM_BUTTON, result.claimButton());
+        assertFalse(result.rewardDialogSeen());
+        assertEquals(0, actions.backPresses);
+        assertEquals(2, actions.rewardDialogChecks);
+        assertEquals(2, actions.claimButtonChecks);
     }
 
     @Test
@@ -73,7 +91,7 @@ class StorehouseStaminaClaimFlowTest {
         assertNull(result.claimButton());
         assertFalse(result.rewardDialogSeen());
         assertEquals(1, actions.backPresses);
-        assertEquals(4, actions.rewardDialogChecks);
+        assertEquals(3, actions.rewardDialogChecks);
         assertEquals(1, actions.tooltipChecks);
         assertEquals(1, actions.waitsAfterBack);
         assertEquals(3, actions.regularWaits);

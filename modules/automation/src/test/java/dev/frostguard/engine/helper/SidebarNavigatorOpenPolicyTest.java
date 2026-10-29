@@ -14,6 +14,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 import dev.frostguard.api.configs.TemplatesEnum;
+import dev.frostguard.api.domain.PointData;
 import dev.frostguard.engine.nav.CommonGameAreas;
 import dev.frostguard.engine.nav.SidebarDestination;
 import dev.frostguard.engine.nav.SidebarSection;
@@ -34,11 +35,50 @@ class SidebarNavigatorOpenPolicyTest {
     }
 
     @Test
-    void collapsedTriggerStaysInsideTheThinWorldHandle() {
-        assertEquals(6, CommonGameAreas.LEFT_MENU_TRIGGER.topLeft().getX());
-        assertEquals(546, CommonGameAreas.LEFT_MENU_TRIGGER.topLeft().getY());
-        assertEquals(16, CommonGameAreas.LEFT_MENU_TRIGGER.bottomRight().getX());
-        assertEquals(554, CommonGameAreas.LEFT_MENU_TRIGGER.bottomRight().getY());
+    void collapsedTriggerUsesOperatorRectangleFromCorners() {
+        assertEquals(1, CommonGameAreas.LEFT_MENU_TRIGGER.topLeft().getX());
+        assertEquals(485, CommonGameAreas.LEFT_MENU_TRIGGER.topLeft().getY());
+        assertEquals(7, CommonGameAreas.LEFT_MENU_TRIGGER.bottomRight().getX());
+        assertEquals(615, CommonGameAreas.LEFT_MENU_TRIGGER.bottomRight().getY());
+    }
+
+    @Test
+    void triggerHalvesSplitTheOperatorRectangleWithoutGaps() {
+        var full = CommonGameAreas.LEFT_MENU_TRIGGER;
+        var upper = SidebarNavigator.verticalHalf(full, SidebarNavigator.TriggerHalf.UPPER);
+        var lower = SidebarNavigator.verticalHalf(full, SidebarNavigator.TriggerHalf.LOWER);
+
+        assertEquals(full.topLeft().getX(), upper.topLeft().getX());
+        assertEquals(full.topLeft().getY(), upper.topLeft().getY());
+        assertEquals(full.bottomRight().getX(), upper.bottomRight().getX());
+        assertEquals(full.topLeft().getX(), lower.topLeft().getX());
+        assertEquals(full.bottomRight().getX(), lower.bottomRight().getX());
+        assertEquals(full.bottomRight().getY(), lower.bottomRight().getY());
+        assertEquals(upper.bottomRight().getY(), lower.topLeft().getY());
+        assertEquals(SidebarNavigator.TriggerHalf.LOWER,
+                SidebarNavigator.TriggerHalf.UPPER.opposite());
+        assertEquals(SidebarNavigator.TriggerHalf.UPPER,
+                SidebarNavigator.TriggerHalf.LOWER.opposite());
+    }
+
+    @Test
+    void oppositeHalfFallbackAvoidsRepeatingTheSameVerticalBand() {
+        var full = CommonGameAreas.LEFT_MENU_TRIGGER;
+        var first = SidebarNavigator.verticalHalf(full, SidebarNavigator.TriggerHalf.UPPER);
+        var second = SidebarNavigator.verticalHalf(full, SidebarNavigator.TriggerHalf.UPPER.opposite());
+        assertTrue(first.bottomRight().getY() <= second.topLeft().getY());
+        assertNotEquals(first.topLeft().getY(), second.topLeft().getY());
+    }
+
+    @Test
+    void halfContainingClassifiesTapAgainstTheMidline() {
+        var full = CommonGameAreas.LEFT_MENU_TRIGGER;
+        int midY = full.topLeft().getY()
+                + (full.bottomRight().getY() - full.topLeft().getY()) / 2;
+        assertEquals(SidebarNavigator.TriggerHalf.UPPER,
+                SidebarNavigator.halfContaining(full, new PointData(3, midY - 1)));
+        assertEquals(SidebarNavigator.TriggerHalf.LOWER,
+                SidebarNavigator.halfContaining(full, new PointData(3, midY)));
     }
 
     @Test

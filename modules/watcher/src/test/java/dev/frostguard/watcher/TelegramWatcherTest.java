@@ -27,6 +27,20 @@ class TelegramWatcherTest {
     }
 
     @Test
+    void windowsScriptLaunchersRunThroughCmd() {
+        Path launcher = tempDir.resolve("Launch-Frostguard-Fork.cmd");
+        WorkspacePaths workspace = new WorkspacePaths(tempDir.resolve("Bot 1"), RuntimeChannel.NIGHTLY);
+        String comSpec = System.getenv("ComSpec");
+        if (comSpec == null || comSpec.isBlank()) {
+            comSpec = "cmd.exe";
+        }
+
+        assertEquals(List.of(comSpec, "/c", launcher.toAbsolutePath().toString()),
+                TelegramWatcher.botLaunchCommand(launcher, Path.of("java"),
+                        tempDir.resolve("frostguard.jar"), workspace, false));
+    }
+
+    @Test
     void sourceWatcherPreservesWorkspaceThroughJvmOptions() {
         WorkspacePaths workspace = new WorkspacePaths(tempDir.resolve("Bot 1"), RuntimeChannel.DEVELOPMENT);
         Path jar = tempDir.resolve("frostguard.jar");

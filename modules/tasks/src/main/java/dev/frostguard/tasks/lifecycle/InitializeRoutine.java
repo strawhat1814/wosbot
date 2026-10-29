@@ -16,9 +16,22 @@ import dev.frostguard.api.domain.PointData;
 import dev.frostguard.api.domain.RawImageData;
 import dev.frostguard.engine.schedule.DelayedTask;
 import dev.frostguard.engine.schedule.LaunchPoint;
+import dev.frostguard.engine.schedule.TaskDispatcher;
+import dev.frostguard.engine.schedule.TaskQueue;
+import dev.frostguard.engine.service.TelegramBotService;
 import dev.frostguard.engine.helper.CharacterSwitchHelper;
+import dev.frostguard.engine.input.TapInteractionService;
 import dev.frostguard.engine.nav.CommonGameAreas;
 import dev.frostguard.engine.nav.CommonOCRSettings;
+import dev.frostguard.engine.service.ProfileService;
+import dev.frostguard.engine.service.ScheduleService;
+import dev.frostguard.engine.sharedlogin.SharedLoginDirective;
+import dev.frostguard.engine.sharedlogin.SharedLoginHandshakeCoordinator;
+import dev.frostguard.engine.sharedlogin.SharedLoginHandshakeSession;
+import dev.frostguard.engine.sharedlogin.SharedLoginObservation;
+import dev.frostguard.engine.sharedlogin.SharedLoginPair;
+import dev.frostguard.engine.sharedlogin.SharedLoginPairGate;
+import dev.frostguard.tasks.combat.PolarSpecialRewardsBudget;
 import dev.frostguard.vision.convert.ImageConverter;
 import dev.frostguard.vision.detection.CloseCrossDetector;
 import dev.frostguard.vision.match.OpenCvPatternLocator;
@@ -58,7 +71,7 @@ import java.util.function.BooleanSupplier;
  * <ul>
  * <li>Game not installed: Throws StopExecutionException (stops queue)</li>
  * <li>Reconnect state detected: Throws ProfileInReconnectStateException</li>
- * <li>Home screen not found: Tries one bounded in-game Back action, then pauses the profile</li>
+ * <li>Home screen not found (any mid-task UI after {@code /adbreboot}): bounded Android Back presses while the game owns foreground, then pauses the profile</li>
  * <li>Verified Google Play redirect: Requires operator action and releases the
  * emulator slot during a profile cooldown</li>
  * </ul>
@@ -97,6 +110,8 @@ public class InitializeRoutine extends DelayedTask {
 	private static final int MAX_WELCOME_BACK_DISMISSALS = 1;
 	private static final int MAX_CLOSEABLE_OVERLAY_DISMISSALS = 3;
 	private static final int MAX_TREK_EXIT_HINT_DISMISSALS = 3;
+	private static final int MAX_ANR_WAIT_DISMISSALS = 3;
+	private static final int ANR_WAIT_SETTLE_MS = 8_000;
 	private static final int UNKNOWN_BLOCKER_BACK_SETTLE_MS = 2000;
 	private static final int MAX_UNKNOWN_BLOCKER_POSTCONDITION_ATTEMPTS = 3;
 	private static final int STARTUP_PATTERN_THRESHOLD = 90;
@@ -111,9 +126,15 @@ public class InitializeRoutine extends DelayedTask {
 	private int welcomeBackDismissals = 0;
 	private int closeableOverlayDismissals = 0;
 	private int trekExitHintDismissals = 0;
+	private int anrWaitDismissals = 0;
+	private int quitGameDismissals = 0;
+	private Instant nextSharedLoginCharacterReadAt = Instant.EPOCH;
 	private String lastVerifiedStartupState = "initialization started";
 	private RawImageData lastStartupFrame;
 	private final DiagnosticSnapshotStore startupSnapshots = DiagnosticSnapshotStore.forCurrentWorkspace();
+
+	private static final int MAX_QUIT_GAME_DISMISSALS = 6;
+	private static final long SHARED_LOGIN_CHARACTER_READ_COOLDOWN_MS = 8_000L;
 
 	/**
 	 * Helper for character switching operations.
@@ -165,7 +186,53 @@ public class InitializeRoutine extends DelayedTask {
 		ensureEmulatorRunning();
 		ensureGameInstalled();
 		ensureGameRunning();
-		
+
+		SharedLoginPair sharedPair = SharedLoginPair.resolve(
+				profile,
+				id -> ProfileService.obtain().fetchAllAccounts().stream()
+						.filter(account -> id.equals(account.getId()))
+						.findFirst()
+						.orElse(null))
+				.orElse(null);
+		if (sharedPair != null) {
+			// After a successful handshake, Initialize still runs before other tasks.
+			// Do not markPending / peer-kick again or the pair thrash-resets forever.
+			if (SharedLoginPairGate.isReady(sharedPair)) {
+				CharacterSwitchHelper.CharacterVerifyResult readyVerify =
+						classifySharedLoginReadyCharacter();
+				if (readyVerify == CharacterSwitchHelper.CharacterVerifyResult.MATCH) {
+					logInfo("Shared login already ready on owned character; skipping handshake");
+					handleInitializationSuccess();
+					return;
+				}
+				if (readyVerify == CharacterSwitchHelper.CharacterVerifyResult.INCONCLUSIVE) {
+					// Junk OCR / profile sheet flake must not clear the ready gate or force
+					// another Initialize loop. Last successful handshake already proved the
+					// owned character; proceed so farming is not stuck on Init forever.
+					logWarning("Shared login ready-path character OCR inconclusive; "
+							+ "keeping pair ready and skipping re-handshake");
+					handleInitializationSuccess();
+					return;
+				}
+				logWarning("Shared login was ready but live character does not match; "
+						+ "clearing Polar special-rewards budget and re-handshaking");
+				if (profile.getId() != null) {
+					PolarSpecialRewardsBudget.clearProfile(profile.getId());
+				}
+			}
+			SharedLoginPairGate.markPending(sharedPair);
+			if (!runSharedLoginHandshake(sharedPair)) {
+				// Stay gated; keep Initialize retrying — no farming on the wrong character.
+				setRecurring(true);
+				reschedule(LocalDateTime.now().plusSeconds(5));
+				logWarning("Shared login not ready; Initialize will retry. Farming stays blocked.");
+				return;
+			}
+			SharedLoginPairGate.markReady(sharedPair);
+			handleInitializationSuccess();
+			return;
+		}
+
 		// Wait for home screen
 		if (!waitForHomeScreen()) {
 			// A blocking startup state already selected and logged its bounded outcome.
@@ -340,6 +407,13 @@ public class InitializeRoutine extends DelayedTask {
 				deferResourceDownloadTimeout();
 			}
 
+			if (dismissAnrDialogIfPresent()) {
+				logInfo("Verified Android ANR dialog — tapped Wait. Letting the game recover.");
+				sleepTask(ANR_WAIT_SETTLE_MS);
+				attempts++;
+				continue;
+			}
+
 			if (dismissWelcomeBackIfPresent()) {
 				logInfo("Verified Welcome back dialog dismissed. Waiting for home/world postcondition.");
 				sleepTask(2000);
@@ -364,6 +438,13 @@ public class InitializeRoutine extends DelayedTask {
 			if (dismissTrekExitHintIfPresent()) {
 				logInfo("Verified Trek exit hint dismissed. Waiting for a fresh home/world postcondition.");
 				sleepTask(2000);
+				attempts++;
+				continue;
+			}
+
+			// Any mid-task UI (Intel, Alliance, Mail, deploy, …) — do not wait for a human.
+			if (tryBoundedGameBackForUnknownScreen("home-finding loop")) {
+				sleepTask(UNKNOWN_BLOCKER_BACK_SETTLE_MS);
 				attempts++;
 				continue;
 			}
@@ -447,6 +528,10 @@ public class InitializeRoutine extends DelayedTask {
 			}
 			if (dismissTrekExitHintIfPresent()) {
 				logInfo("Verified Trek exit hint dismissed during the game update flow.");
+				continue;
+			}
+			if (tryBoundedGameBackForUnknownScreen("game update flow")) {
+				sleepTask(UNKNOWN_BLOCKER_BACK_SETTLE_MS);
 				continue;
 			}
 
@@ -579,10 +664,32 @@ public class InitializeRoutine extends DelayedTask {
 	}
 
 	static java.util.List<CloseCrossDetector.Detection> locateCloseableStartupControls(RawImageData capture) {
-		return CloseCrossDetector.locate(capture, CLOSEABLE_OVERLAY_SEARCH_AREA)
+		return CloseCrossDetector.locateBrightOrWarm(capture, CLOSEABLE_OVERLAY_SEARCH_AREA)
 				.stream()
 				.filter(candidate -> candidate.center().getY() <= MAX_CLOSEABLE_OVERLAY_CENTER_Y)
 				.toList();
+	}
+
+	/**
+	 * Generic escape for unknown in-game screens left open after ADB recovery or
+	 * a killed task. Only while Whiteout Survival owns the foreground; budget is
+	 * shared with {@link #recoverUnknownStartupBlocker()}.
+	 */
+	private boolean tryBoundedGameBackForUnknownScreen(String phase) {
+		boolean gameForeground = isGameForeground();
+		if (StartupRecoveryPolicy.forUnknownBlocker(gameForeground, unknownBlockerBackAttempts)
+				!= StartupRecoveryPolicy.UnknownBlockerAction.TRY_GAME_BACK) {
+			return false;
+		}
+		unknownBlockerBackAttempts++;
+		lastVerifiedStartupState = "unknown in-game screen with Whiteout Survival foreground (" + phase + ")";
+		logWarning("Home/world unavailable on an unsupported screen (" + phase
+				+ "). Whiteout Survival owns the foreground; sending bounded Android Back "
+				+ unknownBlockerBackAttempts + "/"
+				+ StartupRecoveryPolicy.MAX_UNKNOWN_BLOCKER_BACK_ATTEMPTS + ".");
+		pressBack();
+		lastVerifiedStartupState = "bounded Android Back sent (" + phase + ")";
+		return true;
 	}
 
 	private boolean dismissTrekExitHintIfPresent() {
@@ -620,6 +727,48 @@ public class InitializeRoutine extends DelayedTask {
 		tapInside(CommonGameAreas.STARTUP_EXIT_HINT_TAP_AREA);
 		lastVerifiedStartupState = "Trek lower-centre exit action sent";
 		logInfo("Tapped the verified lower-centre Trek exit-hint area; outcome pending a fresh home/world frame.");
+		return true;
+	}
+
+	/**
+	 * Android "isn't responding" system dialog. Prefer Wait so the game can recover;
+	 * Close app would force a full relaunch and lose mid-session state.
+	 */
+	private boolean dismissAnrDialogIfPresent() {
+		if (anrWaitDismissals >= MAX_ANR_WAIT_DISMISSALS) {
+			return false;
+		}
+
+		RawImageData capture = captureStartupFrame("Android ANR dialog inspection");
+		if (capture == null) {
+			return false;
+		}
+
+		AnrDialogClassifier.Evidence evidence;
+		try {
+			String ocrText = emuManager.readText(
+					EMULATOR_NUMBER,
+					CommonGameAreas.ANR_DIALOG_OCR_AREA.topLeft(),
+					CommonGameAreas.ANR_DIALOG_OCR_AREA.bottomRight(),
+					CommonOCRSettings.ANR_DIALOG_SETTINGS,
+					true);
+			evidence = AnrDialogClassifier.inspect(ocrText);
+		} catch (IOException | OcrException | RuntimeException exception) {
+			logDebug("Android ANR dialog OCR unavailable: " + exception.getMessage());
+			return false;
+		}
+		if (!evidence.detected()) {
+			return false;
+		}
+
+		anrWaitDismissals++;
+		lastVerifiedStartupState = "Android ANR dialog";
+		logWarning("Android ANR dialog verified from a fresh frame"
+				+ "; normalizedEvidence='" + evidence.normalizedText() + "'"
+				+ "; action=Wait"
+				+ "; dismissal=" + anrWaitDismissals + "/" + MAX_ANR_WAIT_DISMISSALS + ".");
+		tapInside(CommonGameAreas.ANR_WAIT_TAP_AREA);
+		lastVerifiedStartupState = "Android ANR Wait action sent";
 		return true;
 	}
 
@@ -748,6 +897,9 @@ public class InitializeRoutine extends DelayedTask {
 			if (dismissTrekExitHintIfPresent()) {
 				logInfo("Verified Trek exit hint dismissed after the required resource download.");
 			}
+			if (tryBoundedGameBackForUnknownScreen("resource download")) {
+				sleepTask(UNKNOWN_BLOCKER_BACK_SETTLE_MS);
+			}
 			if (attempt % RESOURCE_DOWNLOAD_PROGRESS_LOG_INTERVAL == 0) {
 				logInfo("Required resource download still in progress ("
 						+ attempt * RESOURCE_DOWNLOAD_POLL_DELAY_MS / 1000 + " seconds elapsed).");
@@ -816,33 +968,28 @@ public class InitializeRoutine extends DelayedTask {
 	 * Strategy after known startup-state checks and passive waiting are exhausted:
 	 * <ol>
 	 * <li>Verify that Whiteout Survival owns the foreground window</li>
-	 * <li>Send Android Back at most once</li>
+	 * <li>Spend remaining bounded Android Back budget (shared with the home-finding loop)</li>
 	 * <li>Re-run only verified startup handlers while waiting for home/world</li>
 	 * <li>Otherwise enter a cooldown that stops only the game and releases the slot</li>
 	 * </ol>
 	 */
 	private boolean recoverUnknownStartupBlocker() {
 		boolean gameForeground = isGameForeground();
-		if (StartupRecoveryPolicy.forUnknownBlocker(gameForeground, unknownBlockerBackAttempts)
-				== StartupRecoveryPolicy.UnknownBlockerAction.TRY_GAME_BACK) {
-			unknownBlockerBackAttempts++;
-			lastVerifiedStartupState = "unknown startup screen with Whiteout Survival foreground";
-			logWarning("Home/world remained unavailable after " + MAX_HOME_SCREEN_ATTEMPTS
-					+ " passive checks. Whiteout Survival owns the foreground window; sending bounded Android Back recovery "
-					+ unknownBlockerBackAttempts + "/"
-					+ StartupRecoveryPolicy.MAX_UNKNOWN_BLOCKER_BACK_ATTEMPTS + ".");
-			pressBack();
-			lastVerifiedStartupState = "bounded Android Back sent to foreground game";
-
+		while (tryBoundedGameBackForUnknownScreen("post-loop recovery")) {
 			for (int attempt = 1; attempt <= MAX_UNKNOWN_BLOCKER_POSTCONDITION_ATTEMPTS; attempt++) {
 				sleepTask(UNKNOWN_BLOCKER_BACK_SETTLE_MS);
 				if (searchForHomeScreen()) {
 					lastVerifiedStartupState = "home/world screen after bounded Android Back";
-					logInfo("Home screen found after one bounded Android Back recovery.");
+					logInfo("Home screen found after bounded Android Back recovery.");
 					return true;
 				}
 
 				checkForReconnectState();
+				if (dismissAnrDialogIfPresent()) {
+					logInfo("Verified Android ANR dialog — tapped Wait after bounded Android Back recovery.");
+					sleepTask(ANR_WAIT_SETTLE_MS);
+					continue;
+				}
 				if (dismissWelcomeBackIfPresent()) {
 					logInfo("Verified Welcome back dialog dismissed after bounded Android Back recovery.");
 					continue;
@@ -885,7 +1032,9 @@ public class InitializeRoutine extends DelayedTask {
 				"home/world",
 				"unsupported startup screen",
 				gameForeground
-						? "One bounded Android Back sent only while Whiteout Survival owned the foreground window"
+						? "Bounded Android Back (" + unknownBlockerBackAttempts + "/"
+								+ StartupRecoveryPolicy.MAX_UNKNOWN_BLOCKER_BACK_ATTEMPTS
+								+ ") sent only while Whiteout Survival owned the foreground window"
 						: "No input sent because Whiteout Survival did not own the foreground window",
 				"Stop the game, release the slot, and retry initialization after fifteen minutes"))
 				.withEvidencePath(snapshot.saved() ? snapshot.relativePath() : "");
@@ -980,10 +1129,383 @@ public class InitializeRoutine extends DelayedTask {
 	}
 
 	/**
+	 * Coordinates Connect/Reconnect with the paired profile so both emulators end
+	 * on their configured characters without the uncoordinated reconnect pause loop.
+	 */
+	private boolean runSharedLoginHandshake(SharedLoginPair pair) {
+		SharedLoginHandshakeCoordinator coordinator = SharedLoginHandshakeCoordinator.shared();
+		SharedLoginPairGate.markPending(pair);
+		logInfo("Shared login handshake active with peer profile id="
+				+ pair.peerOf(profile.getId()).getId()
+				+ "; farming blocked until both characters match");
+		requestSharedLoginPeerJoin(pair, "initialize handshake");
+
+		int attempt = 0;
+		while (true) {
+			checkPreemption();
+			attempt++;
+			// Fresh dismiss budgets each attempt — login ads can reappear after Connect.
+			closeableOverlayDismissals = 0;
+			welcomeBackDismissals = 0;
+			trekExitHintDismissals = 0;
+			quitGameDismissals = 0;
+			SharedLoginHandshakeSession session = coordinator.join(pair);
+			logInfo("Shared login handshake attempt " + attempt);
+			boolean ok = runSharedLoginHandshakeAttempt(session);
+			if (ok) {
+				coordinator.finish(session);
+				return true;
+			}
+			String reason = session.failureReason() == null
+					? "handshake attempt failed"
+					: session.failureReason();
+			coordinator.finish(session);
+			logWarning("Shared login handshake attempt " + attempt + " failed (" + reason
+					+ "); retrying — farming stays blocked.");
+			requestSharedLoginPeerJoin(pair, "handshake retry " + (attempt + 1));
+			long backoffMs = Math.min(15_000L, 2_000L + (attempt * 1_000L));
+			sleepTask(backoffMs);
+		}
+	}
+
+	private boolean runSharedLoginHandshakeAttempt(SharedLoginHandshakeSession session) {
+		awaitSharedLoginHomeOrReconnect();
+		Instant deadline = Instant.now().plus(SharedLoginHandshakeSession.SESSION_TIMEOUT);
+		Instant nextPeerKickAt = Instant.now().plusSeconds(20);
+		while (Instant.now().isBefore(deadline)) {
+			checkPreemption();
+			if (session.isFailed()) {
+				logError("Shared login handshake failed: " + session.failureReason());
+				return false;
+			}
+			SharedLoginObservation observation = observeSharedLoginScreen(session.pair());
+			SharedLoginDirective directive = session.next(profile.getId(), observation);
+			logInfo("Shared login directive: " + directive.action()
+					+ (directive.detail() == null ? "" : " — " + directive.detail()));
+
+			switch (directive.action()) {
+				case WAIT -> {
+					if (directive.detail() != null
+							&& directive.detail().contains("Waiting for shared-login peer")
+							&& !Instant.now().isBefore(nextPeerKickAt)) {
+						requestSharedLoginPeerJoin(session.pair(), "peer still missing from handshake");
+						nextPeerKickAt = Instant.now().plusSeconds(20);
+					}
+					// Peer/self stuck on War/Intel/formation/etc. without closeable ads —
+					// escalate with bounded Back so handshake does not idle until timeout.
+					if (directive.detail() != null
+							&& directive.detail().contains("inconclusive polls")) {
+						escalateSharedLoginInconclusiveScreen();
+					}
+					sleepTask(1500);
+				}
+				case PREP_RECONNECT -> {
+					if (!tapReconnectButton()) {
+						logWarning("Shared login prep reconnect button not found; retrying.");
+						sleepTask(1500);
+						break;
+					}
+					sleepTask(CharacterSwitchHelper.CHARACTER_SWITCH_RELOAD_DELAY_MS);
+					session.markPrepReconnectDone(profile.getId());
+				}
+				case PREPARE_SWITCH_AND_COMMIT -> {
+					if (characterSwitchHelper.verifyCurrentCharacter(profile)) {
+						logInfo("Shared login switcher already on owned character; skipping Connect");
+						session.markCommitFinished();
+						break;
+					}
+					boolean switched = characterSwitchHelper.switchToCharacter(
+							directive.targetCharacterName(),
+							() -> awaitSharedLoginBarrier(session, true),
+							false,
+							true);
+					if (!switched) {
+						session.abort("Switcher could not complete Switch Character / Connect");
+						logError("Shared login switcher Connect failed.");
+						return false;
+					}
+					session.markCommitFinished();
+				}
+				case ARM_RECONNECT_AND_COMMIT -> {
+					if (!isReconnectVisible()) {
+						if (characterSwitchHelper.verifyCurrentCharacter(profile)) {
+							logInfo("Shared login waiter already on owned character (no Reconnect); skipping to verify");
+							session.markCommitFinished();
+							break;
+						}
+						logWarning("Shared login waiter expected Reconnect; waiting.");
+						sleepTask(1000);
+						break;
+					}
+					if (!awaitSharedLoginBarrier(session, false)) {
+						if (!session.isFailed()) {
+							session.abort("Reconnect barrier failed");
+						}
+						logError("Shared login Reconnect barrier failed.");
+						return false;
+					}
+					if (!tapReconnectButton()) {
+						session.abort("Waiter failed to tap Reconnect");
+						logError("Shared login waiter failed to tap Reconnect.");
+						return false;
+					}
+					sleepTask(CharacterSwitchHelper.CHARACTER_SWITCH_RELOAD_DELAY_MS);
+					session.markCommitFinished();
+				}
+				case VERIFY -> {
+					dismissQuitGameIfPresent();
+					boolean ok = characterSwitchHelper.verifyCurrentCharacter(profile);
+					SharedLoginDirective after = session.reportVerify(profile.getId(), ok);
+					logInfo("Shared login verify=" + ok + " next=" + after.action()
+							+ (after.detail() == null ? "" : " — " + after.detail()));
+					if (after.action() == SharedLoginDirective.Action.DONE) {
+						return true;
+					}
+					if (after.action() == SharedLoginDirective.Action.FAILED) {
+						logError("Shared login handshake failed: " + after.detail());
+						return false;
+					}
+					sleepTask(1500);
+				}
+				case DONE -> {
+					return true;
+				}
+				case FAILED -> {
+					logError("Shared login handshake failed: " + directive.detail());
+					return false;
+				}
+			}
+		}
+		session.abort("Shared login handshake attempt timed out");
+		logError("Shared login handshake attempt timed out.");
+		return false;
+	}
+
+	private void requestSharedLoginPeerJoin(SharedLoginPair pair, String reason) {
+		try {
+			TaskDispatcher dispatcher = ScheduleService.obtain().getCoordinator();
+			if (dispatcher == null) {
+				logWarning("Shared login peer kick skipped; schedule coordinator unavailable.");
+				return;
+			}
+			Long peerId = pair.peerOf(profile.getId()).getId();
+			TaskQueue peerQueue = dispatcher.getQueue(peerId);
+			if (peerQueue == null) {
+				logWarning("Shared login peer queue not found for id=" + peerId);
+				return;
+			}
+			peerQueue.joinSharedLoginHandshake(reason + " from " + profile.getName());
+		} catch (RuntimeException failure) {
+			logWarning("Shared login peer kick failed: " + failure.getMessage());
+		}
+	}
+
+	/**
+	 * Soft-waits for home or Reconnect without throwing {@link ProfileInReconnectStateException},
+	 * so the pair coordinator owns reconnect timing.
+	 */
+	private void awaitSharedLoginHomeOrReconnect() {
+		for (int attempt = 0; attempt < MAX_HOME_SCREEN_ATTEMPTS; attempt++) {
+			checkPreemption();
+			if (isReconnectVisible() || searchForHomeScreen() || searchForSharedLoginGameplayChrome()) {
+				return;
+			}
+			dismissSharedLoginBlockers();
+			downloadRequiredResources();
+			sleepTask(2000);
+		}
+		logWarning("Shared login settle ended without home or Reconnect; handshake will keep polling.");
+	}
+
+	/**
+	 * Ready-path owned-character check with a few OCR retries. Inconclusive sheet reads
+	 * (short junk / null) must not force markPending + full handshake.
+	 */
+	private CharacterSwitchHelper.CharacterVerifyResult classifySharedLoginReadyCharacter() {
+		CharacterSwitchHelper.CharacterVerifyResult last =
+				CharacterSwitchHelper.CharacterVerifyResult.INCONCLUSIVE;
+		for (int attempt = 1; attempt <= 3; attempt++) {
+			checkPreemption();
+			dismissQuitGameIfPresent();
+			last = characterSwitchHelper.classifyCurrentCharacter(profile);
+			if (last == CharacterSwitchHelper.CharacterVerifyResult.MATCH
+					|| last == CharacterSwitchHelper.CharacterVerifyResult.MISMATCH) {
+				return last;
+			}
+			logInfo("Shared login ready-path verify inconclusive (" + attempt + "/3); retrying");
+			dismissQuitGameIfPresent();
+			sleepTask(800);
+		}
+		return last;
+	}
+
+	/**
+	 * When observe cannot find Home/Reconnect and overlays did not clear, leave mid-task
+	 * UI with a few Backs (Quit Game Cancel after each). Avoids handshake timeouts while
+	 * one emulator sits on War/Intel/formation with the peer already home.
+	 */
+	private void escalateSharedLoginInconclusiveScreen() {
+		if (isReconnectVisible() || searchForHomeScreen() || searchForSharedLoginGameplayChrome()) {
+			return;
+		}
+		if (dismissSharedLoginBlockers()) {
+			logInfo("Shared login: cleared blocker during inconclusive escalate");
+			return;
+		}
+		logInfo("Shared login: inconclusive screen; bounded Back to recover home/Reconnect");
+		for (int i = 0; i < 2; i++) {
+			pressBack();
+			sleepTask(500);
+			dismissQuitGameIfPresent();
+			if (isReconnectVisible() || searchForHomeScreen() || searchForSharedLoginGameplayChrome()) {
+				return;
+			}
+		}
+	}
+
+	private SharedLoginObservation observeSharedLoginScreen(SharedLoginPair pair) {
+		dismissQuitGameIfPresent();
+		boolean reconnect = isReconnectVisible();
+		if (reconnect) {
+			return new SharedLoginObservation(true, false, null);
+		}
+		boolean inGame = searchForHomeScreen() || searchForSharedLoginGameplayChrome();
+		if (!inGame) {
+			// Login/promo ads block furnace/world chrome. Prefer closeable-overlay dismiss
+			// first — generic Back opens Quit Game. Escalate happens on WAIT polls.
+			if (dismissSharedLoginBlockers()) {
+				logInfo("Shared login: dismissed a startup blocker; re-checking home/Reconnect");
+			}
+			return new SharedLoginObservation(false, false, null);
+		}
+
+		// City/World chrome is enough to count as connected. When both sides report that,
+		// the session goes straight to VERIFY (owned-character check) without needing OCR
+		// names for role assignment. Only read the avatar on a cooldown, and only trust
+		// names that match a paired character (garbage like "Be" / "Cgo I goo" is ignored).
+		String trustedName = null;
+		if (!Instant.now().isBefore(nextSharedLoginCharacterReadAt)) {
+			nextSharedLoginCharacterReadAt = Instant.now()
+					.plusMillis(SHARED_LOGIN_CHARACTER_READ_COOLDOWN_MS);
+			dismissQuitGameIfPresent();
+			CharacterSwitchHelper.LiveCharacter live = characterSwitchHelper.readLiveCharacter();
+			dismissQuitGameIfPresent();
+			if (live != null && pair.matchesEitherCharacterName(live.name())) {
+				trustedName = live.name().trim();
+				logInfo("Shared login: trusted live character '" + trustedName + "'");
+			} else if (live != null && live.name() != null && !live.name().isBlank()) {
+				logInfo("Shared login: ignoring untrusted live OCR '" + live.name() + "'");
+			}
+		}
+		return new SharedLoginObservation(false, true, trustedName);
+	}
+
+	/**
+	 * Promo/login ads, Welcome back, Trek exit hints, ANR, Quit Game — same handlers as
+	 * normal Initialize, without generic Back (shared-login must not thrash Quit Game).
+	 *
+	 * @return true when any dismiss action was taken
+	 */
+	private boolean dismissSharedLoginBlockers() {
+		boolean acted = false;
+		acted |= dismissQuitGameIfPresent();
+		acted |= dismissWelcomeBackIfPresent();
+		acted |= dismissCloseableStartupOverlayIfPresent();
+		acted |= dismissTrekExitHintIfPresent();
+		acted |= dismissAnrDialogIfPresent();
+		return acted;
+	}
+
+	/**
+	 * Extra City/World markers for when furnace/world templates miss (zoom, overlays).
+	 * Avoids opening the profile just to prove the game is playable.
+	 */
+	private boolean searchForSharedLoginGameplayChrome() {
+		RawImageData frame = captureStartupFrame("shared-login gameplay chrome");
+		TemplatesEnum[] markers = {
+				TemplatesEnum.GAME_HOME_PETS,
+				TemplatesEnum.GAME_HOME_INTEL,
+				TemplatesEnum.GAME_HOME_BOTTOM_BAR_SHOP_BUTTON,
+				TemplatesEnum.GAME_HOME_BOTTOM_BAR_BACKPACK_BUTTON
+		};
+		for (TemplatesEnum marker : markers) {
+			ImageSearchResultData hit = emuManager.locatePattern(
+					EMULATOR_NUMBER, frame, marker, STARTUP_PATTERN_THRESHOLD);
+			if (hit != null && hit.isFound()) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** Dismiss the City/World "Quit Game?" prompt opened by accidental Back presses. */
+	private boolean dismissQuitGameIfPresent() {
+		if (quitGameDismissals >= MAX_QUIT_GAME_DISMISSALS) {
+			return false;
+		}
+		RawImageData capture = captureStartupFrame("Quit Game dialog inspection");
+		if (capture == null) {
+			return false;
+		}
+		String ocrText;
+		try {
+			ocrText = emuManager.readText(
+					EMULATOR_NUMBER,
+					CommonGameAreas.QUIT_GAME_DIALOG_OCR_AREA.topLeft(),
+					CommonGameAreas.QUIT_GAME_DIALOG_OCR_AREA.bottomRight(),
+					CommonOCRSettings.ANR_DIALOG_SETTINGS,
+					true);
+		} catch (IOException | OcrException | RuntimeException exception) {
+			logDebug("Quit Game dialog OCR unavailable: " + exception.getMessage());
+			return false;
+		}
+		if (ocrText == null) {
+			return false;
+		}
+		String normalized = ocrText.toLowerCase(java.util.Locale.ROOT).replaceAll("\\s+", "");
+		if (!(normalized.contains("quitgame") || normalized.contains("quit"))) {
+			return false;
+		}
+		quitGameDismissals++;
+		logWarning("Quit Game dialog detected; tapping Cancel"
+				+ "; dismissal=" + quitGameDismissals + "/" + MAX_QUIT_GAME_DISMISSALS);
+		tapInside(CommonGameAreas.QUIT_GAME_CANCEL_TAP_AREA);
+		sleepTask(500);
+		return true;
+	}
+
+	private boolean isReconnectVisible() {
+		RawImageData frame = captureStartupFrame("shared-login reconnect inspection");
+		ImageSearchResultData reconnect = emuManager.locatePattern(
+				EMULATOR_NUMBER, frame, TemplatesEnum.GAME_HOME_RECONNECT, STARTUP_PATTERN_THRESHOLD);
+		return reconnect != null && reconnect.isFound();
+	}
+
+	private boolean tapReconnectButton() {
+		RawImageData frame = captureStartupFrame("shared-login reconnect tap");
+		ImageSearchResultData reconnect = emuManager.locatePattern(
+				EMULATOR_NUMBER, frame, TemplatesEnum.GAME_HOME_RECONNECT, STARTUP_PATTERN_THRESHOLD);
+		if (reconnect == null || !reconnect.isFound()) {
+			return false;
+		}
+		TapInteractionService.forController(emuManager, EMULATOR_NUMBER).tapInside(reconnect);
+		return true;
+	}
+
+	private boolean awaitSharedLoginBarrier(SharedLoginHandshakeSession session, boolean switcher) {
+		try {
+			return session.awaitCommitBarrier(profile.getId(), switcher);
+		} catch (InterruptedException interrupted) {
+			Thread.currentThread().interrupt();
+			return false;
+		}
+	}
+
+	/**
 	 * Handles successful initialization.
 	 * 
 	 * <p>
-	 * Reads the current stamina value from the profile screen and stores it
+	 * Reads the stamina badge under the chief avatar and stores it
 	 * in the StaminaService for use by other tasks.
 	 * 
 	 * <p>
@@ -991,9 +1513,24 @@ public class InitializeRoutine extends DelayedTask {
 	 * (recurring=false is already set at the start of execute()).
 	 */
 	private void handleInitializationSuccess() {
-		logInfo("Initialization successful. Reading initial stamina value.");
-		staminaHelper.updateStaminaFromProfile();
+		logInfo("Initialization successful. Reading stamina from the city/world badge.");
+		staminaHelper.updateStaminaFromHud();
 		logInfo("Initialization task completed successfully.");
+		notifyInitializeSucceeded();
+	}
+
+	/** Operator ping so mid-day recovery can proceed profile-by-profile. */
+	private void notifyInitializeSucceeded() {
+		try {
+			String name = profile.getName();
+			if (name == null || name.isBlank()) {
+				name = "id " + profile.getId();
+			}
+			String safeName = name.replace("_", " ").replace("*", "").replace("`", "").replace("[", "");
+			TelegramBotService.getInstance().notifyAllowedChat("✅ " + safeName + " initialized");
+		} catch (Exception e) {
+			logDebug("Telegram initialize notify skipped: " + e.getMessage());
+		}
 	}
 
 	/**

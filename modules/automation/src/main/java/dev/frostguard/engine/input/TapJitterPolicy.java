@@ -110,6 +110,27 @@ public final class TapJitterPolicy {
     }
 
     /**
+     * Uniform sample over the full inclusive rectangle with no edge margin and
+     * no center bias. Use for thin strips where the whole operator box is valid
+     * and center-weighted sampling would over-hit the mid band.
+     */
+    public static PointData sampleInsideUniform(AreaData area) {
+        if (area == null) {
+            throw new IllegalArgumentException("area must not be null");
+        }
+        PointData tl = area.topLeft();
+        PointData br = area.bottomRight();
+        int x0 = Math.min(tl.getX(), br.getX());
+        int x1 = Math.max(tl.getX(), br.getX());
+        int y0 = Math.min(tl.getY(), br.getY());
+        int y1 = Math.max(tl.getY(), br.getY());
+        ThreadLocalRandom rng = ThreadLocalRandom.current();
+        int x = x0 >= x1 ? x0 : rng.nextInt(x0, x1 + 1);
+        int y = y0 >= y1 ? y0 : rng.nextInt(y0, y1 + 1);
+        return clampToScreen(x, y);
+    }
+
+    /**
      * Picks a randomized tap coordinate within {@code radius} pixels of the
      * given point (Chebyshev distance). Radius {@code 0} returns the point
      * itself (clamped); negative radii are treated as {@code 0}.

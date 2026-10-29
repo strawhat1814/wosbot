@@ -35,6 +35,7 @@ public class ProfileAux {
 	private final StringProperty characterName;
 	private final StringProperty characterAllianceCode;
 	private final StringProperty characterServer;
+	private final LongProperty sharedLoginPeerProfileId;
 
 	private List<ConfigAux> configs = new ArrayList<>();
 	private List<String> tags = new ArrayList<>();
@@ -55,17 +56,28 @@ public class ProfileAux {
 					  Long reconnectionTime, String characterId,
 					  String characterName, String characterAllianceCode,
 					  String characterServer) {
+		this(id, name, emulatorNumber, enabled, priority, status, reconnectionTime,
+				characterId, characterName, characterAllianceCode, characterServer, null);
+	}
+
+	public ProfileAux(Long id, String name, String emulatorNumber,
+					  boolean enabled, Long priority, String status,
+					  Long reconnectionTime, String characterId,
+					  String characterName, String characterAllianceCode,
+					  String characterServer, Long sharedLoginPeerProfileId) {
 		this.id                     = new SimpleLongProperty(id);
 		this.name                   = safeStringProp(name);
 		this.emulatorNumber         = safeStringProp(emulatorNumber);
 		this.enabled                = new SimpleBooleanProperty(enabled);
-		this.priority               = new SimpleLongProperty(priority);
+		this.priority               = new SimpleLongProperty(priority != null ? priority : FALLBACK_PRIORITY);
 		this.status                 = safeStringProp(status);
-		this.reconnectionTime       = new SimpleLongProperty(reconnectionTime);
+		this.reconnectionTime       = new SimpleLongProperty(reconnectionTime != null ? reconnectionTime : 0L);
 		this.characterId            = safeStringProp(characterId);
 		this.characterName          = safeStringProp(characterName);
 		this.characterAllianceCode  = safeStringProp(characterAllianceCode);
 		this.characterServer        = safeStringProp(characterServer);
+		this.sharedLoginPeerProfileId = new SimpleLongProperty(
+				sharedLoginPeerProfileId != null ? sharedLoginPeerProfileId : 0L);
 	}
 
 	/* ────────────────────────────────────────────────
@@ -155,6 +167,21 @@ public class ProfileAux {
 	public String getCharacterServer()                    { return characterServer.get(); }
 	public void setCharacterServer(String val)             { characterServer.set(sanitize(val)); }
 	public StringProperty characterServerProperty()        { return characterServer; }
+
+	/* ────────────────────────────────────────────────
+	 *  sharedLoginPeerProfileId (0 = none)
+	 * ──────────────────────────────────────────────── */
+
+	public Long getSharedLoginPeerProfileId() {
+		long value = sharedLoginPeerProfileId.get();
+		return value <= 0L ? null : value;
+	}
+
+	public void setSharedLoginPeerProfileId(Long val) {
+		sharedLoginPeerProfileId.set(val == null || val <= 0L ? 0L : val);
+	}
+
+	public LongProperty sharedLoginPeerProfileIdProperty() { return sharedLoginPeerProfileId; }
 
 	/* ────────────────────────────────────────────────
 	 *  Per-profile configuration map

@@ -10,7 +10,10 @@ A valid capture with no marker means the island is already collected. The
 routine then reschedules at the profile offset. A failed capture — device
 missing or offline, incomplete screencap, null frame, unsupported pixel depth,
 or an invalid pixel buffer — uses `LifeEssenceRetryPolicy` and keeps the
-failure count.
+failure count. That policy allows two attempts per day: the second after one
+hour, then the next UTC game reset. An unresolved weekly scroll uses the same
+two-attempt window; after the second miss it defers only the weekly check to
+the next day and keeps the normal claim cadence.
 
 A claim counts only after the tapped marker is absent from the next capture.
 The loop stops at three confirmed claims. Ignored taps remain inside the

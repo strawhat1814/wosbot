@@ -24,15 +24,23 @@ import java.util.List;
 public final class CloseCrossDetector {
 
     private static final double MATCH_THRESHOLD = 78.0;
-    private static final int GLYPH_MASK_BRIGHTNESS_THRESHOLD = 220;
+    private static final int BRIGHT_GLYPH_MASK_THRESHOLD = 220;
+    /** Mid-tone orange/gold close controls (e.g. Treasure Trio) on dark headers. */
+    private static final int WARM_GLYPH_MASK_THRESHOLD = 95;
     private static final double[] SCALES = {0.60, 0.70, 0.80, 0.90, 1.00, 1.10, 1.20};
-    private static final List<TemplateSpec> CROSS_TEMPLATES = List.of(
-            new TemplateSpec("/templates/common/closeCross.png", SCALES),
+    private static final List<TemplateSpec> BRIGHT_CROSS_TEMPLATES = List.of(
+            new TemplateSpec("/templates/common/closeCross.png", SCALES, BRIGHT_GLYPH_MASK_THRESHOLD),
             // The reviewed Craftsman capture is native 55 px. Smaller variants matched
             // unrelated dialog decoration in the startup-negative frame set.
-            new TemplateSpec("/templates/common/closeCrossCraftsman.png", new double[] {1.00}),
+            new TemplateSpec("/templates/common/closeCrossCraftsman.png", new double[] {1.00},
+                    BRIGHT_GLYPH_MASK_THRESHOLD),
             // The Myriad Bazaar close glyph is a compact solid white X on a pale blue backing.
-            new TemplateSpec("/templates/common/closeCrossMyriadBazaar.png", new double[] {1.00}));
+            new TemplateSpec("/templates/common/closeCrossMyriadBazaar.png", new double[] {1.00},
+                    BRIGHT_GLYPH_MASK_THRESHOLD));
+    /** Warm orange close (Treasure Trio); startup-only — too noisy for general search. */
+    private static final List<TemplateSpec> WARM_CROSS_TEMPLATES = List.of(
+            new TemplateSpec("/templates/common/closeCrossOrange.png", new double[] {0.90, 1.00, 1.10},
+                    WARM_GLYPH_MASK_THRESHOLD));
     private static final int MAX_MATCHES_PER_SCALE = 12;
     private static final int MAX_RESULTS = 32;
 
@@ -61,7 +69,7 @@ public final class CloseCrossDetector {
         loadOpenCv();
         Mat gray = toGray(frame, bounds);
         try {
-            return search(gray, bounds.left(), bounds.top());
+            return search(gray, bounds.left(), bounds.top(), BRIGHT_CROSS_TEMPLATES);
         } finally {
             gray.release();
         }
@@ -69,6 +77,23 @@ public final class CloseCrossDetector {
 
     /** Finds controls in an inclusive full-frame area without converting the raw capture to an image. */
     public static List<Detection> locate(RawImageData frame, AreaData searchArea) {
+        return locate(frame, searchArea, BRIGHT_CROSS_TEMPLATES);
+    }
+
+    /**
+     * Bright white close crosses, then warm orange (Treasure Trio login pack).
+     * Use for startup overlay dismissal only — warm matching is too noisy elsewhere.
+     */
+    public static List<Detection> locateBrightOrWarm(RawImageData frame, AreaData searchArea) {
+        List<Detection> bright = locate(frame, searchArea, BRIGHT_CROSS_TEMPLATES);
+        if (!bright.isEmpty()) {
+            return bright;
+        }
+        return locate(frame, searchArea, WARM_CROSS_TEMPLATES);
+    }
+
+    private static List<Detection> locate(
+            RawImageData frame, AreaData searchArea, List<TemplateSpec> templates) {
         if (frame == null) {
             throw new IllegalArgumentException("Raw close-cross frame must contain valid pixel data.");
         }
@@ -90,21 +115,22 @@ public final class CloseCrossDetector {
         loadOpenCv();
         Mat gray = toGray(frame, bytesPerPixel, bounds);
         try {
-            return search(gray, bounds.left(), bounds.top());
+            return search(gray, bounds.left(), bounds.top(), templates);
         } finally {
             gray.release();
         }
     }
 
     /** Returns matches meeting the configured threshold in an inclusive image-relative area. */
-    private static List<Detection> search(Mat roi, int offsetX, int offsetY) {
+    private static List<Detection> search(
+            Mat roi, int offsetX, int offsetY, List<TemplateSpec> templates) {
         MatOfByte encoded = null;
         Mat template = null;
         Mat glyphMask = null;
         List<Mat> scaledTemplates = new ArrayList<>();
         List<Detection> candidates = new ArrayList<>();
         try {
-            for (TemplateSpec templateSpec : CROSS_TEMPLATES) {
+            for (TemplateSpec templateSpec : templates) {
                 try (InputStream stream = CloseCrossDetector.class.getResourceAsStream(templateSpec.path())) {
                     if (stream == null) {
                         throw new IllegalStateException("Missing close-cross template " + templateSpec.path());
@@ -114,7 +140,7 @@ public final class CloseCrossDetector {
                     if (template.empty()) {
                         throw new IllegalStateException("Could not decode close-cross template " + templateSpec.path());
                     }
-                    glyphMask = createGlyphMask(template);
+                    glyphMask = createGlyphMask(template, templateSpec.maskBrightnessThreshold());
                     for (double scale : templateSpec.scales()) {
                         int width = Math.max(8, (int) Math.round(template.cols() * scale));
                         int height = Math.max(8, (int) Math.round(template.rows() * scale));
@@ -203,11 +229,12 @@ public final class CloseCrossDetector {
     }
 
     /**
-     * Ignores changing offer artwork behind the control while retaining the bright close glyph.
+     * Ignores changing offer artwork behind the control while retaining the close glyph.
+     * Bright white Xs use a high threshold; warm orange Xs need a lower one.
      */
-    private static Mat createGlyphMask(Mat template) {
+    private static Mat createGlyphMask(Mat template, int brightnessThreshold) {
         Mat mask = new Mat(template.rows(), template.cols(), CvType.CV_8UC1);
-        Imgproc.threshold(template, mask, GLYPH_MASK_BRIGHTNESS_THRESHOLD, 255, Imgproc.THRESH_BINARY);
+        Imgproc.threshold(template, mask, brightnessThreshold, 255, Imgproc.THRESH_BINARY);
         return mask;
     }
 
@@ -352,7 +379,7 @@ public final class CloseCrossDetector {
         }
     }
 
-    private record TemplateSpec(String path, double[] scales) {
+    private record TemplateSpec(String path, double[] scales, int maskBrightnessThreshold) {
     }
 
 }
