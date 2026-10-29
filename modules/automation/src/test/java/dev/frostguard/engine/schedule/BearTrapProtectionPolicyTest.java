@@ -1,6 +1,8 @@
 package dev.frostguard.engine.schedule;
 
 import static dev.frostguard.api.configs.ConfigurationKeyEnum.BEAR_TRAP_EVENT_BOOL;
+import static dev.frostguard.api.configs.ConfigurationKeyEnum.BEAR_TRAP_MODE_STRING;
+import static dev.frostguard.api.configs.ConfigurationKeyEnum.BEAR_TRAP_NUMBER_INT;
 import static dev.frostguard.api.configs.ConfigurationKeyEnum.BEAR_TRAP_PREPARATION_TIME_INT;
 import static dev.frostguard.api.configs.ConfigurationKeyEnum.BEAR_TRAP_SCHEDULE_DATETIME_STRING;
 import static dev.frostguard.api.configs.ConfigurationKeyEnum.BEAR_TRAP_TIMER_1_BLOCK_RALLIES_BOOL;
@@ -147,6 +149,31 @@ class BearTrapProtectionPolicyTest {
 
         assertTrue(legacyDecision.blocked());
         assertFalse(explicitlyDisabledDecision.blocked());
+    }
+
+    @Test
+    void modeBForcesPauseAllButExemptsOwnJoinAndInitialize() {
+        AccountDescriptor profile = new AccountDescriptor(1L);
+        profile.setConfig(BEAR_TRAP_EVENT_BOOL, true);
+        profile.setConfig(BEAR_TRAP_MODE_STRING, "B");
+        profile.setConfig(BEAR_TRAP_NUMBER_INT, 1);
+        profile.setConfig(BEAR_TRAP_SCHEDULE_DATETIME_STRING, TRAP_1.format(CONFIG_DATE_TIME));
+        Clock clock = clockAt(TRAP_1);
+
+        var gather = BearTrapProtectionPolicy.evaluateTask(
+                profile, TpDailyTaskEnum.GATHER_RESOURCES, clock);
+        var own = BearTrapProtectionPolicy.evaluateTask(
+                profile, TpDailyTaskEnum.BEAR_TRAP_OWN_RALLY, clock);
+        var join = BearTrapProtectionPolicy.evaluateTask(
+                profile, TpDailyTaskEnum.BEAR_TRAP_JOIN, clock);
+        var initialize = BearTrapProtectionPolicy.evaluateTask(
+                profile, TpDailyTaskEnum.INITIALIZE, clock);
+
+        assertTrue(gather.blocked());
+        assertEquals(BearTrapProtectionPolicy.BlockReason.ALL_TASKS, gather.reason());
+        assertFalse(own.blocked());
+        assertFalse(join.blocked());
+        assertFalse(initialize.blocked());
     }
 
     @Test

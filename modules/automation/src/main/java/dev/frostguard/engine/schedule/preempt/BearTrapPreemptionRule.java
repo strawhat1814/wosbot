@@ -2,6 +2,7 @@ package dev.frostguard.engine.schedule.preempt;
 
 import java.time.Clock;
 
+import dev.frostguard.api.configs.BearTrapMode;
 import dev.frostguard.api.configs.ConfigurationKeyEnum;
 import dev.frostguard.api.configs.TemplatesEnum;
 import dev.frostguard.api.configs.TpDailyTaskEnum;
@@ -19,6 +20,7 @@ import dev.frostguard.engine.schedule.BearTrapVisualProtection;
 public class BearTrapPreemptionRule implements PreemptionRule {
 
     private final Clock clock;
+    private volatile TpDailyTaskEnum resolvedTask = TpDailyTaskEnum.BEAR_TRAP;
 
     public BearTrapPreemptionRule() {
         this(Clock.systemUTC());
@@ -46,7 +48,11 @@ public class BearTrapPreemptionRule implements PreemptionRule {
                 return false;
             }
             BearTrapVisualProtection.markDetected(profile.getId(), clock);
-            return iconMayStartParticipation(profile);
+            if (!iconMayStartParticipation(profile)) {
+                return false;
+            }
+            resolvedTask = participationTaskFor(profile);
+            return true;
         } catch (Exception ignored) {
             return false;
         }
@@ -60,7 +66,21 @@ public class BearTrapPreemptionRule implements PreemptionRule {
     }
 
     @Override
-    public TpDailyTaskEnum getTaskToExecute() { return TpDailyTaskEnum.BEAR_TRAP; }
+    public TpDailyTaskEnum getTaskToExecute() {
+        return resolvedTask;
+    }
+
+    /**
+     * Resolve the participation task for the profile's Bear mode.
+     * Mode B starts the Own Rally ticket (which owns prep) instead of the monolith.
+     */
+    public static TpDailyTaskEnum participationTaskFor(AccountDescriptor profile) {
+        if (profile != null && BearTrapMode.isModeB(
+                profile.getConfig(ConfigurationKeyEnum.BEAR_TRAP_MODE_STRING, String.class))) {
+            return TpDailyTaskEnum.BEAR_TRAP_OWN_RALLY;
+        }
+        return TpDailyTaskEnum.BEAR_TRAP;
+    }
 
     @Override
     public String getRuleName() { return "BearTrapActive"; }

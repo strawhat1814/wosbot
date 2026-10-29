@@ -1,6 +1,8 @@
 package dev.frostguard.engine.schedule;
 
 import static dev.frostguard.api.configs.ConfigurationKeyEnum.BEAR_TRAP_EVENT_BOOL;
+import static dev.frostguard.api.configs.ConfigurationKeyEnum.BEAR_TRAP_MODE_STRING;
+import static dev.frostguard.api.configs.ConfigurationKeyEnum.BEAR_TRAP_NUMBER_INT;
 import static dev.frostguard.api.configs.ConfigurationKeyEnum.BEAR_TRAP_SCHEDULE_DATETIME_STRING;
 import static dev.frostguard.api.configs.ConfigurationKeyEnum.BEAR_TRAP_TIMER_1_BLOCK_RALLIES_BOOL;
 import static dev.frostguard.api.configs.ConfigurationKeyEnum.BEAR_TRAP_TIMER_1_ENABLED_BOOL;
@@ -17,6 +19,7 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 
+import dev.frostguard.api.configs.BearTrapMode;
 import dev.frostguard.api.configs.ConfigurationKeyEnum;
 import dev.frostguard.api.configs.TpDailyTaskEnum;
 import dev.frostguard.api.domain.AccountDescriptor;
@@ -65,6 +68,8 @@ public final class BearTrapProtectionPolicy {
 
     private static boolean isProtectionExempt(TpDailyTaskEnum task) {
         return task == TpDailyTaskEnum.BEAR_TRAP
+                || task == TpDailyTaskEnum.BEAR_TRAP_OWN_RALLY
+                || task == TpDailyTaskEnum.BEAR_TRAP_JOIN
                 || task == TpDailyTaskEnum.INITIALIZE
                 || task == TpDailyTaskEnum.SKIP_TUTORIAL
                 || task == TpDailyTaskEnum.CREATE_CHARACTER;
@@ -103,7 +108,7 @@ public final class BearTrapProtectionPolicy {
     }
 
     private static List<ActiveProtection> activeProtections(AccountDescriptor profile, Clock clock) {
-        List<ActiveProtection> result = new ArrayList<>(2);
+        List<ActiveProtection> result = new ArrayList<>(3);
         BearTrapVisualProtection.releaseAt(profile.getId(), clock)
                 .ifPresent(releaseAt -> result.add(new ActiveProtection("icon", true, false, releaseAt)));
         addIfActive(result, profile, clock, new TrapSettings(
@@ -118,7 +123,47 @@ public final class BearTrapProtectionPolicy {
                 BEAR_TRAP_TIMER_2_SCHEDULE_DATETIME_STRING,
                 BEAR_TRAP_TIMER_2_BLOCK_RALLIES_BOOL,
                 BEAR_TRAP_TIMER_2_PAUSE_ALL_TASKS_BOOL));
+        addModeBParticipationPause(result, profile, clock);
         return result;
+    }
+
+    /**
+     * Mode B forces pause-all during the selected participation window so only
+     * Own / Join / Initialize (and other exempts) can run.
+     */
+    private static void addModeBParticipationPause(
+            List<ActiveProtection> result,
+            AccountDescriptor profile,
+            Clock clock) {
+        if (!Boolean.TRUE.equals(profile.getConfig(BEAR_TRAP_EVENT_BOOL, Boolean.class))) {
+            return;
+        }
+        if (!BearTrapMode.isModeB(profile.getConfig(BEAR_TRAP_MODE_STRING, String.class))) {
+            return;
+        }
+        Integer trapNumber = profile.getConfig(BEAR_TRAP_NUMBER_INT, Integer.class);
+        int selected = trapNumber != null && trapNumber == 2 ? 2 : 1;
+        ConfigurationKeyEnum scheduleKey = selected == 2
+                ? BEAR_TRAP_TIMER_2_SCHEDULE_DATETIME_STRING
+                : BEAR_TRAP_SCHEDULE_DATETIME_STRING;
+        LocalDateTime anchor = profile.getConfig(scheduleKey, LocalDateTime.class);
+        if (anchor == null) {
+            return;
+        }
+        BearTrapHelper.WindowResult window = BearTrapHelper.calculateWindow(
+                anchor.toInstant(ZoneOffset.UTC),
+                protectionLeadTimeMinutes(profile),
+                ACTIVE_WINDOW_MINUTES,
+                2,
+                clock);
+        if (window.getState() != TimeWindowHelper.WindowState.INSIDE) {
+            return;
+        }
+        result.add(new ActiveProtection(
+                "modeB-" + selected,
+                true,
+                true,
+                window.getCurrentWindowEnd()));
     }
 
     private static void addIfActive(

@@ -17,6 +17,7 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import dev.frostguard.api.configs.BearTrapMode;
 import dev.frostguard.api.configs.ConfigurationKeyEnum;
 import dev.frostguard.api.configs.StopBehaviorEnum;
 import dev.frostguard.api.configs.TpConfigEnum;
@@ -54,6 +55,7 @@ public class ScheduleService {
 	private static final DateTimeFormatter DISPLAY_TIME = DateTimeFormatter.ofPattern("dd-MM-yyyy HH:mm:ss");
 	private static final Set<ConfigurationKeyEnum> BEAR_SCHEDULE_KEYS = Set.of(
 			ConfigurationKeyEnum.BEAR_TRAP_EVENT_BOOL,
+			ConfigurationKeyEnum.BEAR_TRAP_MODE_STRING,
 			ConfigurationKeyEnum.BEAR_TRAP_NUMBER_INT,
 			ConfigurationKeyEnum.BEAR_TRAP_PREPARATION_TIME_INT,
 			ConfigurationKeyEnum.BEAR_TRAP_SCHEDULE_DATETIME_STRING,
@@ -312,31 +314,50 @@ public class ScheduleService {
 		if (account == null) {
 			return;
 		}
+		boolean modeB = BearTrapMode.isModeB(
+				account.getConfig(ConfigurationKeyEnum.BEAR_TRAP_MODE_STRING, String.class));
 		if (!Boolean.TRUE.equals(account.getConfig(ConfigurationKeyEnum.BEAR_TRAP_EVENT_BOOL, Boolean.class))) {
 			if (dispatcher.getQueue(accountId) != null) {
 				evictTask(accountId, TpDailyTaskEnum.BEAR_TRAP);
+				evictTask(accountId, TpDailyTaskEnum.BEAR_TRAP_OWN_RALLY);
+				evictTask(accountId, TpDailyTaskEnum.BEAR_TRAP_JOIN);
 			}
 			return;
 		}
 
 		BearTrapParticipationSchedule.resolve(account).ifPresentOrElse(plan -> {
 			TaskQueue queue = dispatcher.getQueue(accountId);
+			if (modeB) {
+				if (queue != null) {
+					queue.dequeue(TpDailyTaskEnum.BEAR_TRAP);
+				}
+				evictTask(accountId, TpDailyTaskEnum.BEAR_TRAP);
+				boolean ownUpdated = queue != null && queue.scheduleOrRescheduleQueuedTask(
+						TpDailyTaskEnum.BEAR_TRAP_OWN_RALLY, account, plan.nextRun());
+				boolean joinUpdated = queue != null && queue.scheduleOrRescheduleQueuedTask(
+						TpDailyTaskEnum.BEAR_TRAP_JOIN, account, plan.nextRun());
+				persistNextSchedule(account, TpDailyTaskEnum.BEAR_TRAP_OWN_RALLY, plan.nextRun(), null);
+				persistNextSchedule(account, TpDailyTaskEnum.BEAR_TRAP_JOIN, plan.nextRun(), null);
+				recordBearTaskState(accountId, TpDailyTaskEnum.BEAR_TRAP_OWN_RALLY, plan.nextRun(), true);
+				recordBearTaskState(accountId, TpDailyTaskEnum.BEAR_TRAP_JOIN, plan.nextRun(), true);
+				recordBearTaskState(accountId, TpDailyTaskEnum.BEAR_TRAP, null, false);
+				log(TpMessageSeverityEnum.INFO, "Bear Trap Event", account.getName(),
+						"Mode B Own+Join aligned with Timer " + plan.trapNumber()
+								+ " for " + formatTime(plan.nextRun())
+								+ ((ownUpdated || joinUpdated) ? "" : " (persisted for the next queue load)"));
+				return;
+			}
+
+			if (queue != null) {
+				queue.dequeue(TpDailyTaskEnum.BEAR_TRAP_OWN_RALLY);
+				queue.dequeue(TpDailyTaskEnum.BEAR_TRAP_JOIN);
+			}
+			evictTask(accountId, TpDailyTaskEnum.BEAR_TRAP_OWN_RALLY);
+			evictTask(accountId, TpDailyTaskEnum.BEAR_TRAP_JOIN);
 			boolean queueUpdated = queue != null
 					&& queue.scheduleOrRescheduleQueuedTask(TpDailyTaskEnum.BEAR_TRAP, account, plan.nextRun());
 			persistNextSchedule(account, TpDailyTaskEnum.BEAR_TRAP, plan.nextRun(), null);
-
-			TaskStateData previous = TaskManagementService.shared().lookupTaskState(
-					accountId,
-					TpDailyTaskEnum.BEAR_TRAP.getId());
-			TaskStateData aligned = TaskStateData.of(
-					accountId,
-					TpDailyTaskEnum.BEAR_TRAP.getId(),
-					null,
-					true,
-					false,
-					previous != null ? previous.getLastExecutionTime() : null,
-					plan.nextRun());
-			TaskManagementService.shared().recordTaskState(accountId, aligned);
+			recordBearTaskState(accountId, TpDailyTaskEnum.BEAR_TRAP, plan.nextRun(), true);
 
 			log(TpMessageSeverityEnum.INFO, "Bear Trap Event", account.getName(),
 					"Participation schedule aligned with Timer " + plan.trapNumber()
@@ -344,23 +365,32 @@ public class ScheduleService {
 							+ (queueUpdated ? "" : " (persisted for the next queue load)"));
 		}, () -> {
 			TaskQueue queue = dispatcher.getQueue(accountId);
-			boolean removed = queue != null && queue.dequeue(TpDailyTaskEnum.BEAR_TRAP);
-			TaskStateData previous = TaskManagementService.shared().lookupTaskState(
-					accountId,
-					TpDailyTaskEnum.BEAR_TRAP.getId());
-			TaskStateData unavailable = TaskStateData.of(
-					accountId,
-					TpDailyTaskEnum.BEAR_TRAP.getId(),
-					null,
-					false,
-					false,
-					previous != null ? previous.getLastExecutionTime() : null,
-					null);
-			TaskManagementService.shared().recordTaskState(accountId, unavailable);
+			boolean removed = false;
+			if (queue != null) {
+				removed = queue.dequeue(TpDailyTaskEnum.BEAR_TRAP)
+						|| queue.dequeue(TpDailyTaskEnum.BEAR_TRAP_OWN_RALLY)
+						|| queue.dequeue(TpDailyTaskEnum.BEAR_TRAP_JOIN);
+			}
+			recordBearTaskState(accountId, TpDailyTaskEnum.BEAR_TRAP, null, false);
+			recordBearTaskState(accountId, TpDailyTaskEnum.BEAR_TRAP_OWN_RALLY, null, false);
+			recordBearTaskState(accountId, TpDailyTaskEnum.BEAR_TRAP_JOIN, null, false);
 			log(TpMessageSeverityEnum.WARNING, "Bear Trap Event", account.getName(),
 					"Participation was unscheduled because the selected UTC timer is incomplete"
 							+ (removed ? "" : " (no queued task was present)"));
 		});
+	}
+
+	private void recordBearTaskState(Long accountId, TpDailyTaskEnum task, LocalDateTime nextRun, boolean scheduled) {
+		TaskStateData previous = TaskManagementService.shared().lookupTaskState(accountId, task.getId());
+		TaskStateData aligned = TaskStateData.of(
+				accountId,
+				task.getId(),
+				null,
+				scheduled,
+				false,
+				previous != null ? previous.getLastExecutionTime() : null,
+				nextRun);
+		TaskManagementService.shared().recordTaskState(accountId, aligned);
 	}
 
 	public void evictTask(Long accountId, TpDailyTaskEnum taskType) {
@@ -505,6 +535,8 @@ public class ScheduleService {
 		TaskStateData state = baseScheduledState(account.getId(), task.getTpTask().getId(), null);
 		DailyTaskStatusData saved = progressByType.get(task.getTpDailyTaskId());
 		boolean isBearTrap = task.getTpTask() == TpDailyTaskEnum.BEAR_TRAP;
+		boolean modeB = BearTrapMode.isModeB(
+				account.getConfig(ConfigurationKeyEnum.BEAR_TRAP_MODE_STRING, String.class));
 		Optional<BearTrapParticipationSchedule.Plan> bearPlan = isBearTrap
 				? BearTrapParticipationSchedule.resolve(account)
 				: Optional.empty();
@@ -514,6 +546,19 @@ public class ScheduleService {
 			TaskManagementService.shared().recordTaskState(account.getId(), state);
 			log(TpMessageSeverityEnum.WARNING, task.getTaskName(), account.getName(),
 					"Participation was not queued because the selected UTC timer is incomplete");
+			return;
+		}
+		if (isBearTrap && modeB && bearPlan.isPresent()) {
+			// Mode B uses Own+Join tickets instead of the monolith.
+			state.setScheduled(false);
+			state.setNextExecutionTime(null);
+			TaskManagementService.shared().recordTaskState(account.getId(), state);
+			BearTrapParticipationSchedule.Plan plan = bearPlan.get();
+			enqueueBearBTicket(account, queue, TpDailyTaskEnum.BEAR_TRAP_OWN_RALLY, plan, progressByType);
+			enqueueBearBTicket(account, queue, TpDailyTaskEnum.BEAR_TRAP_JOIN, plan, progressByType);
+			log(TpMessageSeverityEnum.INFO, "Bear Trap Event", account.getName(),
+					"Mode B Own+Join queued for Timer " + plan.trapNumber()
+							+ ": " + formatTime(plan.nextRun()));
 			return;
 		}
 		if (bearPlan.isPresent()) {
@@ -546,6 +591,32 @@ public class ScheduleService {
 					"Schedule restored: " + formatTime(saved.getNextSchedule()));
 		}
 		TaskManagementService.shared().recordTaskState(account.getId(), state);
+		queue.enqueue(task);
+	}
+
+	private void enqueueBearBTicket(
+			AccountDescriptor account,
+			TaskQueue queue,
+			TpDailyTaskEnum ticket,
+			BearTrapParticipationSchedule.Plan plan,
+			Map<Integer, DailyTaskStatusData> progressByType) {
+		if (queue.isTaskQueued(ticket) || queue.isExecutingTask(ticket)) {
+			queue.scheduleOrRescheduleQueuedTask(ticket, account, plan.nextRun());
+			persistNextSchedule(account, ticket, plan.nextRun(), null);
+			recordBearTaskState(account.getId(), ticket, plan.nextRun(), true);
+			return;
+		}
+		DelayedTask task = DelayedTaskRegistry.create(ticket, account);
+		if (task == null) {
+			return;
+		}
+		DailyTaskStatusData saved = progressByType.get(task.getTpDailyTaskId());
+		task.reschedule(plan.nextRun());
+		if (saved != null) {
+			task.setLastExecutionTime(saved.getLastExecution());
+		}
+		persistNextSchedule(account, ticket, plan.nextRun(), null);
+		recordBearTaskState(account.getId(), ticket, plan.nextRun(), true);
 		queue.enqueue(task);
 	}
 

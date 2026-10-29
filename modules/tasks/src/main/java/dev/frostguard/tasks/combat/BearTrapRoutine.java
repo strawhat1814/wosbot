@@ -17,6 +17,7 @@ import dev.frostguard.engine.schedule.TaskQueue;
 import dev.frostguard.engine.service.BotOcrEngine;
 import dev.frostguard.engine.service.ConfigService;
 import dev.frostguard.engine.service.ProfileService;
+import dev.frostguard.engine.service.TelegramBotService;
 import dev.frostguard.vision.convert.GameTimeUtils;
 import dev.frostguard.vision.convert.RegexNumberParser;
 import dev.frostguard.vision.ocr.ResilientOcrExecutor;
@@ -37,6 +38,16 @@ import static dev.frostguard.api.configs.TemplatesEnum.*;
 public class BearTrapRoutine extends DelayedTask {
 
 private final AtomicBoolean ownRallyActive = new AtomicBoolean(false);
+
+private final AtomicBoolean telegramPrepWarned = new AtomicBoolean(false);
+
+private final AtomicBoolean telegramEndReported = new AtomicBoolean(false);
+
+private int ownRalliesCalled;
+
+private int joinsAccepted;
+
+private int joinsFailed;
 
 private ScheduledExecutorService rallyScheduler;
 
@@ -157,7 +168,11 @@ private int ownRallyFlag;
 
 private int trapPreparationTime;
 
+private int ownRallyStartDelaySec;
+
 private LocalDateTime referenceTrapTime;
+
+private LocalDateTime activePhaseActivationUtc;
 
 private boolean isVisuallyTriggered = false;
 
@@ -179,7 +194,11 @@ public BearTrapRoutine(AccountDescriptor profile, TpDailyTaskEnum tpTask) {
 @Override
     protected void execute() {
         hydrateConfiguration();
-
+        ownRalliesCalled = 0;
+        joinsAccepted = 0;
+        joinsFailed = 0;
+        telegramPrepWarned.set(false);
+        telegramEndReported.set(false);
 
         if (!confirmExecutionWindow()) {
             deferToNextWindow();
@@ -206,7 +225,7 @@ public BearTrapRoutine(AccountDescriptor profile, TpDailyTaskEnum tpTask) {
                 performPreparationPhase(timing.activationTime);
             } else {
                 logInfo(routineLogBearTrapLine("Trap is already ACTIVE (preparation time passed)"));
-
+                notifyBearAPrep(0);
 
                 logInfo(routineLogBearTrapLine("Executing essential setup (pets and navigation)..."));
                 if (usePets) {
@@ -226,8 +245,10 @@ public BearTrapRoutine(AccountDescriptor profile, TpDailyTaskEnum tpTask) {
             } else {
                 logInfo(routineLogBearTrapLine("Trap already ended for this window"));
             }
+            notifyBearAEnded();
         } catch (Exception e) {
             logError(routineLogBearTrapLine("Issue while Bear Trap execution: " + e.getMessage()), e);
+            notifyBearAEnded();
         } finally {
 
 
@@ -339,6 +360,7 @@ private void performPreparationPhase(LocalDateTime activationTime) {
         long secondsUntilActivation = ChronoUnit.SECONDS.between(now, activationTime);
 
         logInfo(routineLogBearTrapLine("PREPARATION PHASE: " + secondsUntilActivation + " seconds until trap auto-activates"));
+        notifyBearAPrep(secondsUntilActivation);
 
         prepareForTrapFlow();
 
@@ -356,6 +378,37 @@ private void performPreparationPhase(LocalDateTime activationTime) {
 
 private String routineLogBearTrapLine(String note) {
         return "BearTrapRoutine | " + note;
+    }
+
+private void notifyBearAPrep(long secondsUntilActivation) {
+        if (!telegramPrepWarned.compareAndSet(false, true)) {
+            return;
+        }
+        long minutes = Math.max(0, (secondsUntilActivation + 59) / 60);
+        notifyTelegram("Bear A prep — " + profile.getName()
+                + ": trap " + trapNumber
+                + ", activates in " + minutes + "m");
+    }
+
+private void notifyBearAEnded() {
+        if (!telegramEndReported.compareAndSet(false, true)) {
+            return;
+        }
+        if (!telegramPrepWarned.get()) {
+            return;
+        }
+        notifyTelegram("Bear A ended — " + profile.getName()
+                + ": own " + ownRalliesCalled
+                + ", joined " + joinsAccepted
+                + ", failed joins " + joinsFailed);
+    }
+
+private void notifyTelegram(String text) {
+        try {
+            TelegramBotService.getInstance().notifyAllowedChat(text);
+        } catch (Exception e) {
+            logDebug(routineLogBearTrapLine("Telegram notify skipped: " + e.getMessage()));
+        }
     }
 
 private void recallGatherTroopsFlow() {
@@ -404,6 +457,7 @@ private void recallGatherTroopsFlow() {
 private void performTrapActivePhase(LocalDateTime trapEndTime) {
         logInfo(routineLogBearTrapLine("=== TRAP IS NOW ACTIVE - Starting strategy execution ==="));
 
+        this.activePhaseActivationUtc = trapEndTime.minusMinutes(TRAP_DURATION_MINUTES_VALUE);
         LocalDateTime now = LocalDateTime.now(ZoneId.of("UTC"));
         long iterationCount = 0;
 
@@ -503,6 +557,13 @@ private void tryStartOwnRallyFlow(long secondsRemaining) {
         if (!callOwnRally || ownRallyActive.get() || secondsRemaining <= OWN_RALLY_MIN_REMAINING_SECONDS_VALUE) {
             return;
         }
+        if (ownRallyStartDelaySec > 0 && activePhaseActivationUtc != null) {
+            long sinceActivation = ChronoUnit.SECONDS.between(
+                    activePhaseActivationUtc, LocalDateTime.now(ZoneId.of("UTC")));
+            if (sinceActivation < ownRallyStartDelaySec) {
+                return;
+            }
+        }
 
         try {
             long marchDurationSeconds = beginOwnRally();
@@ -513,6 +574,7 @@ private void tryStartOwnRallyFlow(long secondsRemaining) {
                         .plusMinutes(RALLY_RETURN_BUFFER_MINUTES_VALUE);
 
                 logInfo(routineLogBearTrapLine("Own rally started finished cleanly, returning in: " + returnTime.format(TIME_FORMATTER)));
+                ownRalliesCalled++;
                 ownRallyActive.set(true);
                 queueRallyFlagReset(marchDurationSeconds);
                 sleepTask(500);
@@ -543,6 +605,7 @@ private void hydrateConfiguration() {
         this.trapNumber = resolveConfigInt(BEAR_TRAP_NUMBER_INT, DEFAULT_TRAP_NUMBER_VALUE);
         this.referenceTrapTime = resolveConfigDateTime(selectedTrapScheduleKey());
         this.trapPreparationTime = resolveConfigInt(BEAR_TRAP_PREPARATION_TIME_INT, DEFAULT_PREPARATION_TIME_MINUTES_MS);
+        this.ownRallyStartDelaySec = Math.max(0, resolveConfigInt(BEAR_TRAP_OWN_RALLY_START_DELAY_SEC, 0));
         this.callOwnRally = resolveConfigBoolean(BEAR_TRAP_CALL_RALLY_BOOL, DEFAULT_CALL_OWN_RALLY_VALUE);
         this.joinRally = resolveConfigBoolean(BEAR_TRAP_JOIN_RALLY_BOOL, DEFAULT_JOIN_RALLY_VALUE);
         this.usePets = resolveConfigBoolean(BEAR_TRAP_ACTIVE_PETS_BOOL, DEFAULT_USE_PETS_VALUE);
@@ -767,6 +830,32 @@ private void handleJoinRallies2() {
     }
 
 private void manageJoinRallies(int freeMarches) {
+        int joinsWanted = Math.max(1, freeMarches);
+        int joinsSucceeded = 0;
+        // Cap attempts so a list of full rallies cannot spin the active phase forever.
+        int maxAttempts = Math.max(joinsWanted * 3, joinsWanted);
+        for (int attempt = 1; attempt <= maxAttempts && joinsSucceeded < joinsWanted; attempt++) {
+            Boolean outcome = attemptJoinOneRally();
+            if (outcome == null) {
+                break; // no plus icon left
+            }
+            if (Boolean.TRUE.equals(outcome)) {
+                joinsSucceeded++;
+                joinsAccepted++;
+            } else {
+                joinsFailed++;
+            }
+            // false = this rally filled/blocked; try the next plus icon
+        }
+        navigationHelper.ensureCorrectScreenLocation(LaunchPoint.ANY);
+    }
+
+    /**
+     * Opens one joinable rally, deploys, and aborts cleanly when the rally filled before Deploy.
+     * @return {@code true} joined, {@code false} aborted this rally (try another),
+     *         {@code null} no joinable plus icon
+     */
+    private Boolean attemptJoinOneRally() {
         ImageSearchResultData plusIcon = templateSearchHelper.locatePattern(
                 BEAR_JOIN_PLUS_ICON,
                 SearchConfig.builder()
@@ -776,8 +865,7 @@ private void manageJoinRallies(int freeMarches) {
 
         if (!plusIcon.isFound()) {
             logWarning(routineLogBearTrapLine("Zero joinable rallies detected (plus icon not present)"));
-            navigationHelper.ensureCorrectScreenLocation(LaunchPoint.ANY);
-            return;
+            return null;
         }
 
         int selectedFlag = resolveNextJoinFlag();
@@ -786,14 +874,23 @@ private void manageJoinRallies(int freeMarches) {
         tapInside(plusIcon.getPoint(), plusIcon.getPoint(), 1, 100);
         sleepTask(300);
 
-
         if (!marchHelper.selectFlag(selectedFlag)) {
             logWarning(routineLogBearTrapLine(
                     "Configured join formation #" + selectedFlag + " is unavailable; cancelling this join"));
             pressBack();
-            return;
+            return false;
         }
 
+        if (deploymentHelper.hasNoDeployableTroops()) {
+            logWarning(routineLogBearTrapLine("No deployable troops on join formation; aborting"));
+            abortJoinFormationScreen();
+            return false;
+        }
+        if (deploymentHelper.isDeployCostRed()) {
+            logWarning(routineLogBearTrapLine("Deploy stamina cost is red; aborting join"));
+            abortJoinFormationScreen();
+            return false;
+        }
 
         ImageSearchResultData deploy = templateSearchHelper.locatePattern(
                 BEAR_DEPLOY_BUTTON,
@@ -804,13 +901,52 @@ private void manageJoinRallies(int freeMarches) {
 
         if (!deploy.isFound()) {
             logWarning(routineLogBearTrapLine("Deploy button not detected after selecting flag."));
-        } else {
-            tapInside(deploy);
-            sleepTask(500);
-
+            abortJoinFormationScreen();
+            return false;
         }
 
-        navigationHelper.ensureCorrectScreenLocation(LaunchPoint.ANY);
+        tapInside(deploy);
+        // Stay fast: do not wait for the rally to "prove" capacity. Watch for failure
+        // signals and abort to the next plus-icon immediately.
+        sleepTask(350);
+
+        if (deploymentHelper.isMarchQueueFull()) {
+            logWarning(routineLogBearTrapLine(
+                    "March queue full popup after Deploy; aborting join and leaving the rally UI"));
+            abortJoinFormationScreen();
+            return false;
+        }
+        if (deploymentHelper.isSameTargetDialog()) {
+            logWarning(routineLogBearTrapLine(
+                    "Same-target / already-marching dialog after Deploy; aborting join"));
+            abortJoinFormationScreen();
+            return false;
+        }
+
+        // Fast-filling alliance rallies: Deploy tap lands after capacity is gone and the
+        // formation screen stays up. Leaving it parked until that rally ends blocks further joins.
+        ImageSearchResultData stillDeploy = templateSearchHelper.locatePattern(
+                BEAR_DEPLOY_BUTTON,
+                SearchConfig.builder()
+                        .withThreshold(90)
+                        .withMaxAttempts(1)
+                        .build());
+        if (stillDeploy.isFound()) {
+            logWarning(routineLogBearTrapLine(
+                    "Deploy still present after tap — rally likely filled; aborting to try another"));
+            abortJoinFormationScreen();
+            return false;
+        }
+
+        logInfo(routineLogBearTrapLine("Rally join Deploy accepted"));
+        return true;
+    }
+
+    private void abortJoinFormationScreen() {
+        pressBack();
+        sleepTask(300);
+        pressBack();
+        sleepTask(300);
     }
 
 private void logTrapTimingFlow(TrapTimingShape timing) {

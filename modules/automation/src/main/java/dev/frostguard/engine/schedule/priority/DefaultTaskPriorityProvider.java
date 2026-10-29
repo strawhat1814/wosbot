@@ -14,10 +14,12 @@ public class DefaultTaskPriorityProvider implements TaskPriorityProvider {
 
     // Lookup table for built-in task priorities (descending urgency)
     private static final Map<TpDailyTaskEnum, Integer> BUILTIN_SCORES = Map.of(
-            TpDailyTaskEnum.INITIALIZE,     1000,
-            TpDailyTaskEnum.SKIP_TUTORIAL,   950,
-            TpDailyTaskEnum.BEAR_TRAP,       900,
-            TpDailyTaskEnum.ARENA,           800
+            TpDailyTaskEnum.INITIALIZE,          1000,
+            TpDailyTaskEnum.SKIP_TUTORIAL,        950,
+            TpDailyTaskEnum.BEAR_TRAP_OWN_RALLY,  910,
+            TpDailyTaskEnum.BEAR_TRAP,            900,
+            TpDailyTaskEnum.BEAR_TRAP_JOIN,       890,
+            TpDailyTaskEnum.ARENA,                800
     );
 
     @Override

@@ -76,6 +76,21 @@
                     <VBox spacing="10" styleClass="task-section-inner">
                         <HBox alignment="CENTER_LEFT" spacing="18">
                             <VBox spacing="6">
+                                <Label styleClass="task-field-label" text="Automation mode" />
+                                <ComboBox fx:id="comboBoxBearMode" prefWidth="205.0" />
+                                <Label maxWidth="220" styleClass="task-card-description" wrapText="true"
+                                       text="A = legacy single task. B = Own Rally + Join short tasks (survives disconnect)." />
+                            </VBox>
+                            <VBox spacing="6">
+                                <Label styleClass="task-field-label" text="Own rally start delay (sec)" />
+                                <TextField fx:id="textFieldOwnStartDelay" prefWidth="100.0" promptText="0" />
+                                <Label fx:id="labelOwnStartDelayError" maxWidth="220" wrapText="true" />
+                                <Label maxWidth="220" styleClass="task-card-description" wrapText="true"
+                                       text="Wait this many seconds after activation before the first own rally (A and B)." />
+                            </VBox>
+                        </HBox>
+                        <HBox alignment="CENTER_LEFT" spacing="18">
+                            <VBox spacing="6">
                                 <Label styleClass="task-field-label" text="Participation timer" />
                                 <ComboBox fx:id="comboBoxTrapNumber" prefWidth="205.0" />
                                 <Label fx:id="labelTrapSelectionHelper" maxWidth="220"

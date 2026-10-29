@@ -32,6 +32,10 @@ public enum TpDailyTaskEnum {
     ALLIANCE_TECH          (42,  "Alliance Tech",                ConfigurationKeyEnum.ALLIANCE_TECH_BOOL,                      RoutineCategory.ALLIANCE),
     ALLIANCE_TRIUMPH       (45,  "Alliance Triumph",             ConfigurationKeyEnum.ALLIANCE_TRIUMPH_BOOL,                   RoutineCategory.ALLIANCE),
     BEAR_TRAP              (48,  "Bear Trap Event",              ConfigurationKeyEnum.BEAR_TRAP_EVENT_BOOL,                    RoutineCategory.ALLIANCE),
+    /** Mode B own-rally ticket; scheduled only when Bear is enabled in mode B. */
+    BEAR_TRAP_OWN_RALLY    (481, "Bear Trap Own Rally",          null,                                                         RoutineCategory.ALLIANCE),
+    /** Mode B join ticket; scheduled only when Bear is enabled in mode B. */
+    BEAR_TRAP_JOIN         (482, "Bear Trap Join",               null,                                                         RoutineCategory.ALLIANCE),
 
     /* ── chief orders ── */
 

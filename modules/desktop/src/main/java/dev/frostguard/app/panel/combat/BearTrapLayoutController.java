@@ -1,5 +1,6 @@
 package dev.frostguard.app.panel.combat;
 
+import dev.frostguard.api.configs.BearTrapMode;
 import dev.frostguard.api.configs.BearTrapParticipationTriggerEnum;
 import dev.frostguard.api.configs.ConfigurationKeyEnum;
 import dev.frostguard.api.domain.FormationSlots;
@@ -26,6 +27,15 @@ public class BearTrapLayoutController extends AbstractProfileController {
 
     @FXML
     private CheckBox checkBoxEnableBearTrap;
+
+    @FXML
+    private ComboBox<BearTrapMode> comboBoxBearMode;
+
+    @FXML
+    private TextField textFieldOwnStartDelay;
+
+    @FXML
+    private Label labelOwnStartDelayError;
 
     @FXML
     private ComboBox<ProtectionMode> comboBoxProtectionTimer1;
@@ -114,6 +124,7 @@ public class BearTrapLayoutController extends AbstractProfileController {
                         2));
         registerConfigurationFields();
         populateFlagControls();
+        configureBearMode();
         configureProtectionModes();
         configureParticipationTrigger();
         configureParticipationTriggerTooltip();
@@ -133,10 +144,39 @@ public class BearTrapLayoutController extends AbstractProfileController {
 
         registerTextField(textFieldPreparationTime, labelPreparationTimeError,
                 ConfigurationKeyEnum.BEAR_TRAP_PREPARATION_TIME_INT);
+        registerTextField(textFieldOwnStartDelay, labelOwnStartDelayError,
+                ConfigurationKeyEnum.BEAR_TRAP_OWN_RALLY_START_DELAY_SEC);
 
         comboBoxMappings.put(comboBoxTrapNumber, ConfigurationKeyEnum.BEAR_TRAP_NUMBER_INT);
         comboBoxMappings.put(comboBoxRallyFlag, ConfigurationKeyEnum.BEAR_TRAP_RALLY_FLAG_INT);
         checkComboBoxMappings.put(checkComboBoxJoinFlag, ConfigurationKeyEnum.BEAR_TRAP_JOIN_FLAG_INT);
+    }
+
+    private void configureBearMode() {
+        comboBoxBearMode.getItems().setAll(BearTrapMode.values());
+        comboBoxBearMode.setValue(BearTrapMode.A);
+        comboBoxBearMode.setConverter(new StringConverter<>() {
+            @Override
+            public String toString(BearTrapMode mode) {
+                if (mode == null) {
+                    return "";
+                }
+                return mode == BearTrapMode.B
+                        ? "B — Own + Join (resumable)"
+                        : "A — Legacy single task";
+            }
+
+            @Override
+            public BearTrapMode fromString(String value) {
+                return comboBoxBearMode.getValue();
+            }
+        });
+        comboBoxBearMode.valueProperty().addListener((obs, oldValue, newValue) -> {
+            if (newValue == null || isLoadingProfile) {
+                return;
+            }
+            publishWhenReady(ConfigurationKeyEnum.BEAR_TRAP_MODE_STRING, newValue.getStoredValue());
+        });
     }
 
     private void populateFlagControls() {
@@ -290,6 +330,8 @@ public class BearTrapLayoutController extends AbstractProfileController {
         timerBindings.forEach(this::bindTimerState);
 
         BooleanExpression disabledUntilEnabled = checkBoxEnableBearTrap.selectedProperty().not();
+        comboBoxBearMode.disableProperty().bind(disabledUntilEnabled);
+        textFieldOwnStartDelay.disableProperty().bind(disabledUntilEnabled);
         checkBoxActivePets.disableProperty().bind(disabledUntilEnabled);
         checkBoxRecallTroops.disableProperty().bind(disabledUntilEnabled);
         comboBoxTrapNumber.disableProperty().bind(
@@ -354,6 +396,8 @@ public class BearTrapLayoutController extends AbstractProfileController {
                     ConfigurationKeyEnum.BEAR_TRAP_ICON_PARTICIPATION_FALLBACK_BOOL));
             comboBoxParticipationTrigger.setValue(
                     BearTrapParticipationTriggerEnum.fromIconFallbackEnabled(iconFallback));
+            String modeValue = profile.<String>getConfiguration(ConfigurationKeyEnum.BEAR_TRAP_MODE_STRING);
+            comboBoxBearMode.setValue(BearTrapMode.fromStoredValue(modeValue));
             timerBindings.forEach(binding -> binding.editor().setDateTime(
                     loadSavedDateTime(profile, binding.scheduleKey())));
             timerBindings.forEach(binding -> binding.protectionMode().setValue(

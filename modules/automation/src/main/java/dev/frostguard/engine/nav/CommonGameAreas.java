@@ -183,9 +183,15 @@ public final class CommonGameAreas {
     // ── alliance war controls ────────────────────────────────────────
 
     public static final AreaData BOTTOM_MENU_ALLIANCE_BUTTON       = region(493, 1187, 561, 1240);
-    public static final AreaData ALLIANCE_WAR_RALLY_TAB            = region(81, 114, 195, 152);
+    // War list tabs (720x1280). Measured 2026-10-28; Solo↔Rally refresh uses both.
+    public static final AreaData ALLIANCE_WAR_RALLY_TAB            = region(48, 99, 210, 146);
+    public static final AreaData ALLIANCE_WAR_SOLO_TAB             = region(276, 103, 442, 147);
     public static final AreaData ALLIANCE_AUTOJOIN_MENU_BUTTON     = region(260, 1200, 450, 1240);
     public static final AreaData ALLIANCE_AUTOJOIN_DISABLE_BUTTON  = region(120, 1069, 249, 1122);
+
+    // World-map free-march fraction (used/total) under the march queue HUD.
+    // Measured 2026-10-28 for Bear B; do not reuse the older 203,200–246,226 box.
+    public static final AreaData WORLD_FREE_MARCHES_OCR            = region(182, 217, 242, 250);
 
     // ── rally flag & deployment ──────────────────────────────────────
 
