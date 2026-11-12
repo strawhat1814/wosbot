@@ -46,6 +46,7 @@ public class TaskRegistrations {
             case GATHER_BOOST -> new GatherSpeedRoutine(profile, type);
             case STOREHOUSE_CHEST -> new StorehouseChestRoutine(profile, type);
             case STOREHOUSE_WARM_WELCOME -> new WarmWelcomeRoutine(profile, type);
+            case BAKERY_FARM_COLLECT -> new BakeryFarmCollectRoutine(profile, type);
 
             // City
             case WAR_ACADEMY -> new WarAcademyRoutine(profile, type);
