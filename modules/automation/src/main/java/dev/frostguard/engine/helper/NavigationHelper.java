@@ -54,7 +54,8 @@ public class NavigationHelper {
     private static final PointData EVENT_TAB_SCAN_FROM = new PointData(630, 143);
     private static final PointData EVENT_TAB_SCAN_TO = new PointData(400, 128);
     private static final int EVENT_TAB_RESET_SWIPES = 3;
-    private static final int EVENT_TAB_SCAN_SWIPES = 7;
+    private static final int EVENT_TAB_SCAN_SWIPES = 10;
+    private static final int EVENT_TAB_REVERSE_SWIPES = 10;
     private static final long EVENT_TAB_SETTLE_MS = 1000L;
     private static final AreaData LABYRINTH_LEADERBOARD = area(646, 185, 704, 264);
     private static final AreaData LABYRINTH_CATEGORY = area(90, 190, 320, 450);
@@ -548,6 +549,7 @@ public class NavigationHelper {
 
         TemplatesEnum tpl = switch (event) {
             case HERO_MISSION -> TemplatesEnum.HERO_MISSION_EVENT_TAB;
+            case ENDLESS_TRIAL -> TemplatesEnum.ENDLESS_TRIAL_EVENT_TAB;
             case MERCENARY -> TemplatesEnum.MERCENARY_EVENT_TAB;
             case ALLIANCE_CHAMPIONSHIP -> TemplatesEnum.ALLIANCE_CHAMPIONSHIP_TAB;
             case ALLIANCE_MOBILIZATION -> TemplatesEnum.ALLIANCE_MOBILIZATION_TAB;
@@ -556,6 +558,8 @@ public class NavigationHelper {
 
         // The horizontal event strip continues moving after the swipe gesture returns. Searching during
         // that animation can miss even a 97% match, so settle fully and inspect only the header strip.
+        // Order: look in place → swipe toward the strip start → scan forward (finger left) → if still
+        // missing, scan reverse (finger right) in case the forward pass overshot.
         ImageSearchResultData tab = locateEventTab(tpl);
         if (!tab.isFound()) {
             for (int i = 0; i < EVENT_TAB_RESET_SWIPES && !tab.isFound(); i++) {
@@ -566,6 +570,15 @@ public class NavigationHelper {
 
             for (int i = 0; i < EVENT_TAB_SCAN_SWIPES && !tab.isFound(); i++) {
                 emu.swipeScreen(device, EVENT_TAB_SCAN_FROM, EVENT_TAB_SCAN_TO);
+                interruptibleWait(EVENT_TAB_SETTLE_MS);
+                tab = locateEventTab(tpl);
+            }
+        }
+
+        if (!tab.isFound()) {
+            broadcastDebug("Event tab still missing after forward scan; reversing carousel for " + event);
+            for (int i = 0; i < EVENT_TAB_REVERSE_SWIPES && !tab.isFound(); i++) {
+                emu.swipeScreen(device, EVENT_TAB_SCAN_TO, EVENT_TAB_SCAN_FROM);
                 interruptibleWait(EVENT_TAB_SETTLE_MS);
                 tab = locateEventTab(tpl);
             }
@@ -697,7 +710,9 @@ public class NavigationHelper {
 
     private enum ScreenState { HOME, WORLD, RECONNECT, UNKNOWN }
     public enum AllianceMenu { WAR, CHESTS, TERRITORY, SHOP, TECH, HELP, TRIUMPH }
-    public enum EventMenu { HERO_MISSION, MERCENARY, ALLIANCE_CHAMPIONSHIP, ALLIANCE_MOBILIZATION, TUNDRA_TRUCK }
+    public enum EventMenu {
+        HERO_MISSION, ENDLESS_TRIAL, MERCENARY, ALLIANCE_CHAMPIONSHIP, ALLIANCE_MOBILIZATION, TUNDRA_TRUCK
+    }
     public enum DealsTarget { BANK, JOURNEY_OF_LIGHT }
 
     public enum EventMenuOpenResult { REACHED, PANEL_CLOSED, TAB_ABSENT }

@@ -15,7 +15,8 @@ public class EventsLayoutController extends AbstractProfileController {
 
     @FXML
     private CheckBox checkBoxTundraEvent, checkBoxTundraUseGems, checkBoxTundraSSR, checkBoxHeroMission,
-        checkBoxMercenaryEvent, checkBoxJourneyofLight, checkBoxMyriadBazaar, checkBoxTundraEventActivationHour;
+        checkBoxEndlessTrial, checkBoxMercenaryEvent, checkBoxMercenaryAskHelp, checkBoxJourneyofLight,
+        checkBoxMyriadBazaar, checkBoxTundraEventActivationHour;
 
     @FXML
     private TextField textfieldTundraActivationHour;
@@ -46,7 +47,9 @@ public class EventsLayoutController extends AbstractProfileController {
         checkBoxMappings.put(checkBoxTundraSSR, ConfigurationKeyEnum.TUNDRA_TRUCK_SSR_BOOL);
         checkBoxMappings.put(checkBoxTundraEventActivationHour, ConfigurationKeyEnum.TUNDRA_TRUCK_ACTIVATION_TIME_BOOL);
         checkBoxMappings.put(checkBoxHeroMission, ConfigurationKeyEnum.HERO_MISSION_EVENT_BOOL);
+        checkBoxMappings.put(checkBoxEndlessTrial, ConfigurationKeyEnum.ENDLESS_TRIAL_EVENT_BOOL);
         checkBoxMappings.put(checkBoxMercenaryEvent, ConfigurationKeyEnum.MERCENARY_EVENT_BOOL);
+        checkBoxMappings.put(checkBoxMercenaryAskHelp, ConfigurationKeyEnum.MERCENARY_ASK_HELP_BOOL);
         checkBoxMappings.put(checkBoxJourneyofLight, ConfigurationKeyEnum.JOURNEY_OF_LIGHT_BOOL);
         checkBoxMappings.put(checkBoxMyriadBazaar, ConfigurationKeyEnum.MYRIAD_BAZAAR_EVENT_BOOL);
 
@@ -63,6 +66,7 @@ public class EventsLayoutController extends AbstractProfileController {
         );
         comboBoxHeroMissionFlag.disableProperty().bind(checkBoxHeroMission.selectedProperty().not());
         comboBoxMercenaryFlag.disableProperty().bind(checkBoxMercenaryEvent.selectedProperty().not());
+        checkBoxMercenaryAskHelp.disableProperty().bind(checkBoxMercenaryEvent.selectedProperty().not());
     }
 
     private void prepareActivationTimeField() {

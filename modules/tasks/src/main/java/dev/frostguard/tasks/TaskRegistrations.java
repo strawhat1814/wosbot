@@ -106,6 +106,7 @@ public class TaskRegistrations {
             // Events
             case EVENT_TUNDRA_TRUCK -> new TundraTruckEventRoutine(profile, type);
             case EVENT_HERO_MISSION -> new HeroMissionEventRoutine(profile, type);
+            case EVENT_ENDLESS_TRIAL -> new EndlessTrialEventRoutine(profile, type);
             case MERCENARY_EVENT -> new MercenaryEventRoutine(profile, type);
             case EVENT_JOURNEY_OF_LIGHT -> new JourneyofLightRoutine(profile, type);
             case EVENT_MYRIAD_BAZAAR -> new MyriadBazaarEventRoutine(profile, type);

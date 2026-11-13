@@ -65,6 +65,27 @@
                         <Label text="Flag Selection" minWidth="100.0" styleClass="task-field-label" />
                         <ComboBox prefWidth="120.0" fx:id="comboBoxMercenaryFlag" />
                     </HBox>
+                    <CheckBox text="Ask for help on levels 5 / 10 / 15 / 20 / 25"
+                              mnemonicParsing="false" fx:id="checkBoxMercenaryAskHelp" />
+                    <Label wrapText="true" style="-fx-font-style: italic;"
+                           styleClass="task-card-description"
+                           text="When off, those levels attack normally first; after repeated losses the bot calls a rally instead." />
+                </VBox>
+            </VBox>
+
+            <!-- Endless Trial Configuration -->
+            <VBox styleClass="content-card">
+                <HBox styleClass="header-blue" maxWidth="Infinity" alignment="CENTER_LEFT">
+                    <CheckBox text="Endless Trial Event" style="-fx-font-weight: bold;"
+                              mnemonicParsing="false" fx:id="checkBoxEndlessTrial" />
+                </HBox>
+                <VBox styleClass="task-section-inner">
+                    <Label wrapText="true" styleClass="task-card-description"
+                           text="Attack Windhowler up to 3 times daily and claim Daily Challenges" />
+                    <Separator style="-fx-opacity: 0.25;" />
+                    <Label wrapText="true" style="-fx-font-style: italic;"
+                           styleClass="task-card-description"
+                           text="Stays on the target when possible; re-enters Events only if the target area is left" />
                 </VBox>
             </VBox>
 
