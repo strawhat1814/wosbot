@@ -239,7 +239,10 @@ public class MercenaryEventRoutine extends DelayedTask {
             if (eventButton == null) {
                 // Lv.25 with no Scout/Challenge means the hunt is finished (or waiting
                 // on alliance help with no travel control). Do not 5-minute spin.
-                if (restIfFinalLevelSettled(preScoutLevel != null ? preScoutLevel : lastMercenaryLevel)) {
+                Integer settledLevel = preScoutLevel != null ? preScoutLevel : lastMercenaryLevel;
+                if (MercenaryHelpMilestones.isFinalLevel(settledLevel)
+                        && restUntilDailyReset("Mercenary final level " + settledLevel
+                                + " has no Scout/Challenge (help already sent or hunt finished).")) {
                     return;
                 }
                 respondToOpenedScreen(false);
@@ -348,6 +351,12 @@ public class MercenaryEventRoutine extends DelayedTask {
         if (!MercenaryHelpMilestones.requiresAskForHelp(level)) {
             return false;
         }
+        if (!askForHelpEnabled()) {
+            logInfo("Mercenary level " + level
+                    + " is a help milestone, but Ask for Help is disabled. Attacking normally "
+                    + "(rally after repeated losses).");
+            return false;
+        }
 
         ImageSearchResultData help = templateSearchHelper.locatePattern(
                 TemplatesEnum.MERCENARY_ASK_HELP_BUTTON,
@@ -399,15 +408,20 @@ public class MercenaryEventRoutine extends DelayedTask {
     }
 
     /**
-     * Level 25 with no Ask Help left: do not Attack. Rest until daily reset after
-     * the post-help verify visit.
+     * When Ask for Help is enabled, level 25 must not start a solo Attack after the
+     * post-help verify visit. Disabled Ask for Help lets Attack/Rally continue.
      */
     private boolean restIfFinalLevelSettled(Integer level) {
-        if (!MercenaryHelpMilestones.isFinalLevel(level)) {
+        if (!askForHelpEnabled() || !MercenaryHelpMilestones.isFinalLevel(level)) {
             return false;
         }
         return restUntilDailyReset(
                 "Mercenary final level " + level + " reached; not starting a solo Attack.");
+    }
+
+    private boolean askForHelpEnabled() {
+        return Boolean.TRUE.equals(
+                profile.getConfig(ConfigurationKeyEnum.MERCENARY_ASK_HELP_BOOL, Boolean.class));
     }
 
     private boolean restUntilDailyReset(String reason) {

@@ -18,15 +18,25 @@ difficulties need a new enum + properties entry and an array append.
 
 ## Request Help milestones (2A)
 
-Levels **5, 10, 15, 20, 25** tap **Request Help** (wide blue control under
-Attack/Rally), then **Confirm** on the Tips dialog (Mercenary Contract /
-Alliance Challenge), and reschedule (~15 minutes). No Attack/Rally march and
-no deploy stamina spend on those levels. Missing Request Help or Confirm →
-short retry + diagnostic snapshot (unknown outcome), except **Lv.25**: after
-Request Help, one ~15m verify visit; if Request Help is still absent (or any
-visit would otherwise Attack at 25), rest until daily reset — do not keep
-soloing. On the Events card, **Lv.25 + no Scout/Challenge** also rests until
-daily reset (do not treat as unconfirmed controls every 5 minutes).
+Config: `MERCENARY_ASK_HELP_BOOL` (Events UI checkbox; default **on**).
+
+When **on**, levels **5, 10, 15, 20, 25** tap **Request Help** (wide blue
+control under Attack/Rally), then **Confirm** on the Tips dialog (Mercenary
+Contract / Alliance Challenge), and reschedule (~15 minutes). No Attack/Rally
+march and no deploy stamina spend on those levels. Missing Request Help or
+Confirm → short retry + diagnostic snapshot (unknown outcome), except
+**Lv.25**: after Request Help, one ~15m verify visit; if Request Help is still
+absent (or any visit would otherwise Attack at 25), rest until daily reset —
+do not keep soloing.
+
+When **off**, those milestone levels attack normally. After more than three
+consecutive same-level visits (failed attacks), the routine switches to
+**Rally** instead (existing loss fallback). Lv.25 may be attacked/rallied
+instead of resting after a help verify.
+
+On the Events card, **Lv.25 + no Scout/Challenge** always rests until daily
+reset (do not treat as unconfirmed controls every 5 minutes), regardless of
+the Ask for Help setting.
 
 Templates: `MERCENARY_ASK_HELP_BUTTON` (`mercenaryEventAskHelp.png`),
 `MERCENARY_ASK_HELP_CONFIRM` (`mercenaryEventAskHelpConfirm.png`).

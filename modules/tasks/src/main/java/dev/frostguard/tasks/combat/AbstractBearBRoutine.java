@@ -476,8 +476,12 @@ abstract class AbstractBearBRoutine extends DelayedTask {
         return true;
     }
 
+    /** Mode A-style: one join attempt this visit; Join's 5s reschedule retries OCR. */
+    private static final int UNREAD_FREE_MARCHES_FALLBACK = 1;
+
     /**
-     * Reads free marches from the World HUD fraction. Unreadable → 0 (never invent capacity).
+     * Reads free marches from the World HUD fraction.
+     * Unreadable → {@link #UNREAD_FREE_MARCHES_FALLBACK} so Join is not starved.
      */
     protected int inspectFreeMarches() {
         checkPreemption();
@@ -498,8 +502,8 @@ abstract class AbstractBearBRoutine extends DelayedTask {
             logInfo(logLine("Free marches: " + free + " (" + used + "/" + total + ")"));
             return Math.max(0, free);
         }
-        logWarning(logLine("Could not read marches; treating free as 0 (no default capacity)"));
-        return 0;
+        logWarning(logLine("Could not read marches; using default free=" + UNREAD_FREE_MARCHES_FALLBACK));
+        return UNREAD_FREE_MARCHES_FALLBACK;
     }
 
     protected void abortJoinFormationScreen() {

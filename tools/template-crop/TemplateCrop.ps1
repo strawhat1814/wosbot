@@ -39,14 +39,13 @@ $MercDir = Join-Path $TemplatesRoot "templates\mercenary"
 New-Item -ItemType Directory -Force -Path $GarbageDir | Out-Null
 New-Item -ItemType Directory -Force -Path $MercDir | Out-Null
 
-# Last-12h Main A/B/C: only templates that missed on the right screen with a
-# routine failure (found=0 alone is not enough). See game-ui-update-tracking.md.
+# Polar Terror recapture focus: Reward Details OCR + related Polar templates only.
+# Expand this list when another routine needs captures again.
 $TrackingKeys = @(
-    "GAME_HOME_FURNACE",
-    "GAME_HOME_WORLD",
-    "ALLIANCE_SHOP_ADVANCED_TELEPORT",
     "POLAR_TERROR_TAB_SPECIAL_REWARDS",
-    "GAME_HOME_SHORTCUTS_FARM_COAL"
+    "POLAR_TERROR_TAB_MAGNIFYING_GLASS_ICON",
+    "POLAR_TERROR_SEARCH_ICON",
+    "POLAR_TERROR_LEVEL_SELECTOR"
 )
 
 function Find-Adb {
@@ -167,6 +166,17 @@ $form.Add_Shown({
     $form.BringToFront()
 })
 
+# TopMost form buries MessageBox/OpenFileDialog unless they are owned by $form.
+function Show-OwnedMessage {
+    param(
+        [Parameter(Mandatory)][string]$Text,
+        [string]$Caption = "Template Crop",
+        [System.Windows.Forms.MessageBoxButtons]$Buttons = [System.Windows.Forms.MessageBoxButtons]::OK,
+        [System.Windows.Forms.MessageBoxIcon]$Icon = [System.Windows.Forms.MessageBoxIcon]::None
+    )
+    return [System.Windows.Forms.MessageBox]::Show($form, $Text, $Caption, $Buttons, $Icon)
+}
+
 $top = New-Object System.Windows.Forms.FlowLayoutPanel
 $top.Dock = "Top"
 $top.Height = 120
@@ -214,9 +224,9 @@ $templateCombo.AutoCompleteMode = "SuggestAppend"
 $templateCombo.AutoCompleteSource = "ListItems"
 
 $btnReveal = New-Btn "Reveal file"
-$btnTrackingOnly = New-Btn "Tracking list"
-$btnCharOcr = New-Btn "Char name/ID OCR"
-$btnSidebar = New-Btn "Sidebar regions"
+$btnTrackingOnly = New-Btn "Polar list"
+$btnShowAll = New-Btn "Show all templates"
+$btnPolarOcr = New-Btn "Polar Special Rewards OCR"
 
 $lblSaveMode = New-Object System.Windows.Forms.Label
 $lblSaveMode.Text = "Save mode:"
@@ -225,46 +235,24 @@ $lblSaveMode.Margin = New-Object System.Windows.Forms.Padding(12, 12, 0, 4)
 
 $preset = New-Object System.Windows.Forms.ComboBox
 $preset.DropDownStyle = "DropDownList"
-$preset.Width = 400
+$preset.Width = 420
 $preset.Margin = New-Object System.Windows.Forms.Padding(4)
 @(
+    "ocr-polar-special-rewards  (region only)",
     "overwrite-selected-template",
-    "mercenaryWorldSummon.png  (mercenary folder)",
-    "mercenaryWorldSummon2.png  (mercenary folder)",
-    "mercenaryWorldSummon3.png  (mercenary folder)",
-    "mercenaryEventAskHelp.png  (mercenary folder)",
-    "sidebar-left-menu-trigger  (region only)",
-    "sidebar-left-menu-fallback  (region only)",
-    "sidebar-left-menu-close  (region only)",
-    "ocr-character-name  (region only)",
-    "ocr-character-id  (region only)",
-    "ocr-pre-scout  (region only)",
-    "ocr-pre-attack  (region only)",
     "custom-name.png"
 ) | ForEach-Object { [void]$preset.Items.Add($_) }
 $preset.SelectedIndex = 0
 
 # Current CommonGameAreas seeds (x1,y1,x2,y2) - green box after Capture = "previous" coords.
 $script:OcrRegionSeeds = @{
-    "ocr-character-name" = @(281, 831, 610, 884)
-    "ocr-character-id"   = @(275, 901, 462, 932)
-    "sidebar-left-menu-trigger"  = @(1, 483, 8, 617)
-    "sidebar-left-menu-fallback" = @(1, 483, 8, 617)
-    "sidebar-left-menu-close"    = @(450, 510, 482, 594)
+    "ocr-polar-special-rewards" = @(207, 801, 515, 856)
 }
 $script:RegionCropNames = @{
-    "ocr-character-name" = "crop-characterNameOcr.png"
-    "ocr-character-id"   = "crop-characterIdOcr.png"
-    "sidebar-left-menu-trigger"  = "crop-sidebarLeftMenuTrigger.png"
-    "sidebar-left-menu-fallback" = "crop-sidebarLeftMenuFallback.png"
-    "sidebar-left-menu-close"    = "crop-sidebarLeftMenuClose.png"
+    "ocr-polar-special-rewards" = "crop-polarSpecialRewardsHeaderOcr.png"
 }
 $script:RegionJavaNames = @{
-    "ocr-character-name" = "CHARACTER_NAME_OCR_AREA"
-    "ocr-character-id"   = "CHARACTER_ID_OCR_AREA"
-    "sidebar-left-menu-trigger"  = "LEFT_MENU_TRIGGER"
-    "sidebar-left-menu-fallback" = "LEFT_MENU_TRIGGER_FALLBACK"
-    "sidebar-left-menu-close"    = "LEFT_MENU_CLOSE"
+    "ocr-polar-special-rewards" = "POLAR_SPECIAL_REWARDS_HEADER"
 }
 
 $top.Controls.AddRange(@(
@@ -273,7 +261,7 @@ $top.Controls.AddRange(@(
 ))
 $top.SetFlowBreak($chkSquare, $true)
 $top.Controls.AddRange(@(
-    $lblTpl, $templateCombo, $btnTrackingOnly, $btnCharOcr, $btnSidebar, $btnReveal
+    $lblTpl, $templateCombo, $btnTrackingOnly, $btnShowAll, $btnPolarOcr, $btnReveal
 ))
 $top.SetFlowBreak($btnReveal, $true)
 $top.Controls.AddRange(@(
@@ -329,7 +317,7 @@ $status = New-Object System.Windows.Forms.Label
 $status.Dock = "Bottom"
 $status.Height = 56
 $status.Padding = New-Object System.Windows.Forms.Padding(8)
-$status.Text = "1) Pick previous template  2) Pick emulator  3) Capture ADB  4) Compare  5) Crop + Save if needed"
+$status.Text = "Polar focus: open Reward Details, Capture ADB, drag Special Rewards (N left), Save Crop. Show all templates if needed."
 $form.Controls.Add($status)
 
 function Populate-TemplateCombo {
@@ -455,11 +443,7 @@ function Update-Status {
 
 function Get-OcrPresetKey {
     $choice = [string]$preset.SelectedItem
-    if ($choice -like "ocr-character-name*") { return "ocr-character-name" }
-    if ($choice -like "ocr-character-id*") { return "ocr-character-id" }
-    if ($choice -like "sidebar-left-menu-trigger*") { return "sidebar-left-menu-trigger" }
-    if ($choice -like "sidebar-left-menu-fallback*") { return "sidebar-left-menu-fallback" }
-    if ($choice -like "sidebar-left-menu-close*") { return "sidebar-left-menu-close" }
+    if ($choice -like "ocr-polar-special-rewards*") { return "ocr-polar-special-rewards" }
     return $null
 }
 
@@ -518,9 +502,7 @@ function Save-RegionPresetCrop([string]$key, [string]$regionLine) {
     Set-Clipboard $snippet
     Write-Host ("{0} = {1}" -f $javaName, $regionLine)
     Load-RegionReferenceCrop $key
-    [System.Windows.Forms.MessageBox]::Show(
-        "Copied CommonGameAreas snippet:`n$snippet`n`nSaved crop:`n$dest`nPrevious kept as:`n$prev",
-        "Region saved") | Out-Null
+    [void](Show-OwnedMessage -Text "Copied CommonGameAreas snippet:`n$snippet`n`nSaved crop:`n$dest`nPrevious kept as:`n$prev" -Caption "Region saved")
 }
 
 function Load-Image([string]$path) {
@@ -665,11 +647,7 @@ $preset.Add_SelectedIndexChanged({
     $key = Get-OcrPresetKey
     if ($key) {
         [void](Apply-OcrRegionSeed)
-        if ($key -like "sidebar-*") {
-            $status.Text = "Sidebar: World map with 5+ marches, Capture ADB, adjust green box (old seed), Save Crop"
-        } else {
-            $status.Text = "OCR mode: open avatar/profile sheet on emu, Capture ADB, adjust green box, Save Crop"
-        }
+        $status.Text = "Polar OCR: open Reward Details on emuA, Capture ADB, drag green box over Special Rewards (N left), Save Crop"
     }
 })
 $templateCombo.Add_Leave({ Load-ReferenceTemplate })
@@ -678,7 +656,7 @@ $btnRefreshDevices.Add_Click({
     try {
         Refresh-DeviceList
     } catch {
-        [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, "Refresh failed") | Out-Null
+        [void](Show-OwnedMessage -Text $_.Exception.Message -Caption "Refresh failed")
     }
 })
 
@@ -690,37 +668,29 @@ $btnTrackingOnly.Add_Click({
     }
 })
 
-$btnCharOcr.Add_Click({
-    for ($i = 0; $i -lt $preset.Items.Count; $i++) {
-        if ([string]$preset.Items[$i] -like "ocr-character-name*") {
-            $preset.SelectedIndex = $i
-            break
-        }
+$btnShowAll.Add_Click({
+    Populate-TemplateCombo -TrackingOnly $false
+    if ($templateCombo.Items.Count -gt 0 -and -not $templateCombo.Text) {
+        $templateCombo.SelectedIndex = 0
+        Load-ReferenceTemplate
     }
-    [void](Apply-OcrRegionSeed)
-    [System.Windows.Forms.MessageBox]::Show(
-        "Save mode is now 'ocr-character-name'.`n`n1) Open avatar/profile sheet on the emulator`n2) Capture ADB`n3) Adjust the green box over the NAME only`n4) Save Crop (copies region snippet)`n`nThen switch Save mode to 'ocr-character-id' for the ID line.",
-        "Character OCR regions") | Out-Null
 })
 
-$btnSidebar.Add_Click({
+$btnPolarOcr.Add_Click({
     for ($i = 0; $i -lt $preset.Items.Count; $i++) {
-        if ([string]$preset.Items[$i] -like "sidebar-left-menu-close*") {
+        if ([string]$preset.Items[$i] -like "ocr-polar-special-rewards*") {
             $preset.SelectedIndex = $i
             break
         }
     }
-    Load-RegionReferenceCrop "sidebar-left-menu-close"
     [void](Apply-OcrRegionSeed)
-    [System.Windows.Forms.MessageBox]::Show(
-        "Save mode: sidebar-left-menu-close (LEFT_MENU_CLOSE)`n`nLeft = previous crop if any`nGreen box = CURRENT code region (450,510)-(482,594)`n`n1) Open the LEFT SIDEBAR on the emulator (so the close arrow is visible)`n2) Capture ADB`n3) Drag green box over the white close arrow/triangle on the panel's right edge`n4) Save Crop (copies CommonGameAreas snippet)`n`nAlso recapture templates GAME_HOME_FURNACE (city.png) and GAME_HOME_WORLD (world.png): pick them in the template list, Capture on City/World, crop, Save.",
-        "Sidebar close + City/World anchors") | Out-Null
+    [void](Show-OwnedMessage -Text "Save mode: ocr-polar-special-rewards (POLAR_SPECIAL_REWARDS_HEADER)`n`nGreen box starts at the current short seed (182,499)-(537,573), which hits Expert Bonus on today's dialog.`n`n1) On emuA, open Polar Terror Reward Details (magnifying glass)`n2) Capture ADB`n3) Drag the green box over the blue 'Special Rewards (N left)' banner`n4) Save Crop (copies CommonGameAreas snippet)" -Caption "Polar Special Rewards OCR")
 })
 
 $btnReveal.Add_Click({
     $entry = Resolve-TemplateFromCombo
     if (-not $entry -or -not $entry.Exists) {
-        [System.Windows.Forms.MessageBox]::Show("Select a template that exists on disk.", "Reveal") | Out-Null
+        [void](Show-OwnedMessage -Text "Select a template that exists on disk." -Caption "Reveal")
         return
     }
     Start-Process explorer.exe -ArgumentList "/select,`"$($entry.FullPath)`""
@@ -736,7 +706,7 @@ $btnCapture.Add_Click({
         Load-Image $path
         Write-Host "Captured $($script:DeviceSerial) -> $path"
     } catch {
-        [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, "Capture failed") | Out-Null
+        [void](Show-OwnedMessage -Text $_.Exception.Message -Caption "Capture failed")
     }
 })
 
@@ -744,7 +714,7 @@ $btnOpen.Add_Click({
     $dlg = New-Object System.Windows.Forms.OpenFileDialog
     $dlg.Filter = "PNG|*.png|All|*.*"
     $dlg.InitialDirectory = $GarbageDir
-    if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+    if ($dlg.ShowDialog($form) -eq [System.Windows.Forms.DialogResult]::OK) {
         Load-Image $dlg.FileName
     }
 })
@@ -770,22 +740,6 @@ $btnSave.Add_Click({
             Save-RegionPresetCrop -key $regionKey -regionLine $regionLine
             return
         }
-        if ($choice -like "ocr-pre-scout*") {
-            Write-Host "PRE_SCOUT OCR -> $regionLine"
-            Set-Clipboard "MERCENARY_LEVEL_PRE_SCOUT_OCR_AREA = $regionLine"
-            [System.Windows.Forms.MessageBox]::Show(
-                "Copied CommonGameAreas snippet:`nMERCENARY_LEVEL_PRE_SCOUT_OCR_AREA = $regionLine",
-                "OCR region") | Out-Null
-            return
-        }
-        if ($choice -like "ocr-pre-attack*") {
-            Write-Host "PRE_ATTACK OCR -> $regionLine"
-            Set-Clipboard "MERCENARY_LEVEL_PRE_ATTACK_OCR_AREA = $regionLine"
-            [System.Windows.Forms.MessageBox]::Show(
-                "Copied CommonGameAreas snippet:`nMERCENARY_LEVEL_PRE_ATTACK_OCR_AREA = $regionLine",
-                "OCR region") | Out-Null
-            return
-        }
 
         $dest = $null
         if ($choice -eq "overwrite-selected-template") {
@@ -793,9 +747,9 @@ $btnSave.Add_Click({
             if (-not $entry) { throw "Select a Previous template first (or choose custom/mercenary preset)." }
             $dest = $entry.FullPath
             $msg = "Overwrite existing template?`n`n$($entry.Key)`n$dest`n`nCrop $($r.Width)x$($r.Height) from live frame."
-            $ans = [System.Windows.Forms.MessageBox]::Show($msg, "Confirm overwrite",
-                [System.Windows.Forms.MessageBoxButtons]::YesNo,
-                [System.Windows.Forms.MessageBoxIcon]::Warning)
+            $ans = Show-OwnedMessage -Text $msg -Caption "Confirm overwrite" `
+                -Buttons ([System.Windows.Forms.MessageBoxButtons]::YesNo) `
+                -Icon ([System.Windows.Forms.MessageBoxIcon]::Warning)
             if ($ans -ne [System.Windows.Forms.DialogResult]::Yes) { return }
             $dir = Split-Path $dest -Parent
             if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
@@ -805,6 +759,7 @@ $btnSave.Add_Click({
             $input.Width = 420
             $input.Height = 140
             $input.StartPosition = "CenterParent"
+            $input.TopMost = $true
             $tb = New-Object System.Windows.Forms.TextBox
             $tb.Text = "customTemplate.png"
             $tb.Left = 12
@@ -817,7 +772,7 @@ $btnSave.Add_Click({
             $ok.Top = 55
             $input.Controls.AddRange(@($tb, $ok))
             $input.AcceptButton = $ok
-            if ($input.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
+            if ($input.ShowDialog($form) -ne [System.Windows.Forms.DialogResult]::OK) { return }
             $name = $tb.Text.Trim()
             if (-not $name.EndsWith(".png")) { $name = "$name.png" }
             $dest = Join-Path $MercDir $name
@@ -835,19 +790,18 @@ $btnSave.Add_Click({
         Write-Host "Saved $dest"
         Write-Host $regionLine
         Load-ReferenceTemplate
-        [System.Windows.Forms.MessageBox]::Show("Saved:`n$dest`n`n$regionLine", "Crop saved") | Out-Null
+        [void](Show-OwnedMessage -Text "Saved:`n$dest`n`n$regionLine" -Caption "Crop saved")
     } catch {
-        [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, "Save failed") | Out-Null
+        [void](Show-OwnedMessage -Text $_.Exception.Message -Caption "Save failed")
     }
 })
 
 $form.Add_Shown({
-    Populate-TemplateCombo -TrackingOnly $false
+    Populate-TemplateCombo -TrackingOnly $true
     if ($TemplateKey -and $script:TemplateCatalog.ContainsKey($TemplateKey)) {
         $templateCombo.Text = $script:TemplateCatalog[$TemplateKey].Label
         Load-ReferenceTemplate
     } elseif ($templateCombo.Items.Count -gt 0) {
-        # Select first tracking key if present
         $firstTracking = $TrackingKeys | Where-Object { $script:TemplateCatalog.ContainsKey($_) } | Select-Object -First 1
         if ($firstTracking) {
             $templateCombo.Text = $script:TemplateCatalog[$firstTracking].Label

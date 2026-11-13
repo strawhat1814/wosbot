@@ -1,0 +1,18 @@
+---
+description: Auto-commit coherent changes and push to the fork remote
+alwaysApply: true
+---
+
+# Auto-commit and push (daily-driver fork)
+
+After every coherent code, docs, or template change in this repo:
+
+1. Create a signed commit with `git commit -s` and
+   `type(scope): imperative summary`. Do not wait for the user to ask.
+2. Push to the `fork` remote on the current branch (`git push fork HEAD`).
+3. Keep unrelated dirty work in separate commits when practical.
+4. Never commit `.garbage/`, credentials, profile databases, private logs,
+   runtime artifacts, or generated `target/` output.
+
+This project preference overrides the generic Cursor default that only
+commits when explicitly asked.

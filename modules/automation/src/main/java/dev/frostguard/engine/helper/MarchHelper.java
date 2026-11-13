@@ -241,6 +241,10 @@ public class MarchHelper {
 
     // A slot is inspected before it is tapped: padlock evidence rejects locked slots, while the
     // measured white-flag signal distinguishes a saved formation from an empty visible tile.
+    // Hold→formation can paint a blank strip briefly (whitePixels=0 on a saved tile).
+    private static final int FORMATION_EMPTY_RETRY_ATTEMPTS = 3;
+    private static final long FORMATION_EMPTY_RETRY_SETTLE_MS = 400;
+
     public boolean selectFlag(Integer flagNumber) {
         if (flagNumber == null) {
             log.debug("No formation configured - skipping selection");
@@ -251,21 +255,34 @@ public class MarchHelper {
                     + FormationSlots.MIN + "-" + FormationSlots.MAX);
             return false;
         }
-        FormationFrame frame = flagNumber <= 8 ? captureFormationFrame(flagNumber) : moveToRightFormationEnd();
-        if (frame == null) {
-            return false;
+        FormationSlotStateClassifier.State state = FormationSlotStateClassifier.State.EMPTY_OR_MISSING;
+        for (int attempt = 1; attempt <= FORMATION_EMPTY_RETRY_ATTEMPTS; attempt++) {
+            FormationFrame frame = flagNumber <= 8
+                    ? captureFormationFrame(flagNumber)
+                    : moveToRightFormationEnd();
+            if (frame == null) {
+                return false;
+            }
+            state = inspectFormationSlot(flagNumber, frame);
+            if (state == FormationSlotStateClassifier.State.SAVED) {
+                log.debug("Selecting formation #" + flagNumber);
+                taps.tapNear(RallyFlagCoordinates.pointForFlag(flagNumber),
+                        TapJitterPolicy.DEFAULT_POINT_JITTER_RADIUS);
+                interruptibleWait(300);
+                return true;
+            }
+            if (state == FormationSlotStateClassifier.State.LOCKED) {
+                break;
+            }
+            if (attempt < FORMATION_EMPTY_RETRY_ATTEMPTS) {
+                log.debug("Formation #" + flagNumber + " looked empty on attempt " + attempt
+                        + "/" + FORMATION_EMPTY_RETRY_ATTEMPTS + "; waiting for strip to paint");
+                interruptibleWait(FORMATION_EMPTY_RETRY_SETTLE_MS);
+            }
         }
-        FormationSlotStateClassifier.State state = inspectFormationSlot(flagNumber, frame);
-        if (state != FormationSlotStateClassifier.State.SAVED) {
-            log.warn("Formation #" + flagNumber + " is " + state.name().toLowerCase().replace('_', ' ')
-                    + " - not selecting it");
-            return false;
-        }
-        log.debug("Selecting formation #" + flagNumber);
-        // Flag slots are narrow fixed positions — keep the jitter tightly bounded.
-        taps.tapNear(RallyFlagCoordinates.pointForFlag(flagNumber), TapJitterPolicy.DEFAULT_POINT_JITTER_RADIUS);
-        interruptibleWait(300);
-        return true;
+        log.warn("Formation #" + flagNumber + " is " + state.name().toLowerCase().replace('_', ' ')
+                + " - not selecting it");
+        return false;
     }
 
     // Locating every padlock across the strip and mapping each to its nearest slot is immune to the

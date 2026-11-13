@@ -247,8 +247,9 @@ public final class CommonGameAreas {
     // slider bar itself.
     public static final AreaData POLAR_LEVEL_DISPLAY = region(565, 1030, 665, 1078);
     public static final AreaData POLAR_SEARCH_BUTTON = region(301, 1200, 412, 1229);
-    // Operator crop: top-left (182,499) to bottom-right (537,573).
-    public static final AreaData POLAR_SPECIAL_REWARDS_HEADER = region(182, 499, 537, 573);
+    // Operator crop 2026-11-12: Special Rewards (N left) banner on Reward Details
+    // (Expert Bonus sits above this; the old (182,499)-(537,573) strip hit that instead).
+    public static final AreaData POLAR_SPECIAL_REWARDS_HEADER = region(207, 801, 515, 856);
     public static final PointData POLAR_REWARD_DETAILS_CLOSE = point(665, 195);
 
     // ── stamina "Obtain more" dialog ─────────────────────────────────
