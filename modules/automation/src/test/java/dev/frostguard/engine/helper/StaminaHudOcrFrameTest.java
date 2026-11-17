@@ -9,6 +9,7 @@ import javax.imageio.ImageIO;
 
 import org.junit.jupiter.api.Test;
 
+import dev.frostguard.api.domain.OcrSettingsData;
 import dev.frostguard.api.domain.RawImageData;
 import dev.frostguard.engine.nav.CommonGameAreas;
 import dev.frostguard.engine.nav.CommonOCRSettings;
@@ -18,21 +19,32 @@ class StaminaHudOcrFrameTest {
 
     @Test
     void cityBadgeReadsTheVisibleStamina() throws Exception {
-        assertEquals("224", readHud("/stamina/hud-city.png"));
+        assertEquals("224", readHudCombined("/stamina/hud-city.png"));
     }
 
     @Test
     void worldBadgeReadsTheVisibleStamina() throws Exception {
-        assertEquals("224", readHud("/stamina/hud-world.png"));
+        assertEquals("224", readHudCombined("/stamina/hud-world.png"));
     }
 
-    private String readHud(String resource) throws Exception {
+    @Test
+    void worldBadgeKeepsASlenderLeadingOne() throws Exception {
+        assertEquals("142", readHudCombined("/stamina/hud-leading-one-world.png"));
+    }
+
+    private String readHudCombined(String resource) throws Exception {
         RawImageData frame = rgbaFrame(ImageIO.read(Objects.requireNonNull(getClass().getResourceAsStream(resource))));
+        String isolated = recognize(frame, CommonOCRSettings.STAMINA_HUD_ISOLATED_SETTINGS);
+        String raw = recognize(frame, CommonOCRSettings.STAMINA_HUD_SETTINGS);
+        return StaminaHudOcr.preferFullerDigits(isolated, raw);
+    }
+
+    private String recognize(RawImageData frame, OcrSettingsData settings) throws Exception {
         return OcrEngine.recognizeText(
                 frame,
                 CommonGameAreas.STAMINA_HUD_OCR_AREA.topLeft(),
                 CommonGameAreas.STAMINA_HUD_OCR_AREA.bottomRight(),
-                CommonOCRSettings.STAMINA_HUD_SETTINGS).trim();
+                settings).trim();
     }
 
     private RawImageData rgbaFrame(BufferedImage image) {

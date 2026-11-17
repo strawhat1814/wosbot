@@ -59,13 +59,27 @@ public class StaminaHelper {
             persistence.setStamina(accountKey, observed);
             emitInfo("Obtain-more dialog: synchronized tracked stamina " + tracked + " -> " + observed);
         });
-        this.hudStaminaUi = (attempts, retryMs) -> numberReader.attemptRecognition(
-                CommonGameAreas.STAMINA_HUD_OCR_AREA.topLeft(),
-                CommonGameAreas.STAMINA_HUD_OCR_AREA.bottomRight(),
-                attempts, retryMs,
-                CommonOCRSettings.STAMINA_HUD_SETTINGS,
-                text -> RegexNumberParser.conformsTo(text, CommonOCRSettings.NUMBER_PATTERN),
-                text -> RegexNumberParser.extractByPattern(text, CommonOCRSettings.NUMBER_PATTERN));
+        this.hudStaminaUi = (attempts, retryMs) -> {
+            Integer isolated = numberReader.attemptRecognition(
+                    CommonGameAreas.STAMINA_HUD_OCR_AREA.topLeft(),
+                    CommonGameAreas.STAMINA_HUD_OCR_AREA.bottomRight(),
+                    attempts, retryMs,
+                    CommonOCRSettings.STAMINA_HUD_ISOLATED_SETTINGS,
+                    text -> RegexNumberParser.conformsTo(text, CommonOCRSettings.NUMBER_PATTERN),
+                    text -> RegexNumberParser.extractByPattern(text, CommonOCRSettings.NUMBER_PATTERN));
+            Integer raw = numberReader.attemptRecognition(
+                    CommonGameAreas.STAMINA_HUD_OCR_AREA.topLeft(),
+                    CommonGameAreas.STAMINA_HUD_OCR_AREA.bottomRight(),
+                    attempts, retryMs,
+                    CommonOCRSettings.STAMINA_HUD_SETTINGS,
+                    text -> RegexNumberParser.conformsTo(text, CommonOCRSettings.NUMBER_PATTERN),
+                    text -> RegexNumberParser.extractByPattern(text, CommonOCRSettings.NUMBER_PATTERN));
+            Integer picked = StaminaHudOcr.preferFuller(isolated, raw);
+            if (picked != null && (isolated == null || raw == null || !picked.equals(isolated) || !picked.equals(raw))) {
+                emitDebug("HUD stamina OCR candidates isolated=" + isolated + " raw=" + raw + " picked=" + picked);
+            }
+            return picked;
+        };
     }
 
     StaminaHelper(StaminaService persistence, Long accountKey, HudStaminaUi hudStaminaUi) {

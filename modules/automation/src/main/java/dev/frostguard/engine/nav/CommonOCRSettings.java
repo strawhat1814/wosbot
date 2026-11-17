@@ -46,13 +46,17 @@ public final class CommonOCRSettings {
     public static final OcrSettingsData STAMINA_FRACTION_SETTINGS =
             buildConfig("0123456789/", true, 255, 255, 255, TextLayout.SINGLE_LINE);
 
-    // City/World stamina pill: white digits on green. Colour isolation drops the middle
-    // stroke of "2", the same way it drops a slender "1", so the glyphs stay raw.
+    // City/World stamina pill: white digits on green. Raw keeps thick digits (e.g. "224") but
+    // drops a slender leading "1". White isolation keeps that "1" but can split a "2".
+    // StaminaHelper reads both and keeps the fuller digit string.
     public static final OcrSettingsData STAMINA_HUD_SETTINGS =
             OcrSettingsData.builder()
                     .allowedGlyphs("0123456789")
                     .textLayout(TextLayout.SINGLE_LINE)
                     .build();
+
+    public static final OcrSettingsData STAMINA_HUD_ISOLATED_SETTINGS =
+            buildConfig("0123456789", true, 255, 255, 255, TextLayout.SINGLE_LINE);
 
     // spent stamina: digits only, near-white foreground
     public static final OcrSettingsData SPENT_STAMINA_SETTINGS =
