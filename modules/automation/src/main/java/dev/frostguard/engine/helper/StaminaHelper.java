@@ -120,22 +120,19 @@ public class StaminaHelper {
 
     /**
      * Uses Chief Stamina items until the profile holds at least {@code targetStamina}, opening the
-     * Obtain-more dialog from the profile stamina bar. The structured result distinguishes a
-     * confirmed item shortage from transient OCR or UI failures so callers can schedule safely.
+     * Obtain-more dialog from the City/World HUD stamina pill. The structured result distinguishes
+     * a confirmed item shortage from transient OCR or UI failures so callers can schedule safely.
      *
      * @param itemReserve number of items never to spend
      */
     public StaminaTopUpResult topUpFromProfile(int targetStamina, int itemReserve) {
-        taps.tapInside(CommonGameAreas.PROFILE_AVATAR, 1, 200);
-        pause(800);
-        taps.tapInside(CommonGameAreas.STAMINA_BUTTON, 1, 200);
+        taps.tapInside(CommonGameAreas.STAMINA_HUD_TAP_AREA, 1, 200);
         pause(1000);
 
         StaminaTopUpResult result = useItemsInOpenDialog(targetStamina, itemReserve);
-        device.pressBack(deviceSlot);
-        pause(500);
-        device.pressBack(deviceSlot);
-        pause(500);
+        emitInfo("Closing obtain-more dialog opened from the HUD stamina pill");
+        taps.tapNear(CommonGameAreas.STAMINA_DIALOG_CLOSE, TapJitterPolicy.DEFAULT_POINT_JITTER_RADIUS);
+        pause(800);
         return result;
     }
 

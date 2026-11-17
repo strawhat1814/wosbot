@@ -629,7 +629,7 @@ private boolean staminaCouldSupportRally() {
     }
 
 // A rally must not push stamina below the configured reserve, which is held back for Intel and
-// rallies. With stamina items enabled the shortfall is topped up from the profile's Obtain-more
+// rallies. With stamina items enabled the shortfall is topped up from the HUD Obtain-more
 // dialog instead of waiting out the regeneration, so reserve and item usage stop contradicting.
 private boolean ensureStaminaForRally() {
         int required = requiredStaminaForRally();

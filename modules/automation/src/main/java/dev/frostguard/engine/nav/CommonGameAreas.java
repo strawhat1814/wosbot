@@ -48,7 +48,9 @@ public final class CommonGameAreas {
     // Measured 2026-10-20: "224" glyphs sit at about x=38..61, y=105..113; the right edge
     // leaves room for a fourth digit still inside the pill.
     public static final AreaData STAMINA_HUD_OCR_AREA  = region(34, 100, 90, 118);
-    public static final AreaData STAMINA_BUTTON        = region(223, 1101, 244, 1123);
+    // Full green stamina pill (bolt + digits). Tap opens Obtain-more; profile no longer has a
+    // stamina control for this path.
+    public static final AreaData STAMINA_HUD_TAP_AREA  = region(20, 96, 100, 122);
     public static final AreaData STAMINA_OCR_AREA      = region(324, 255, 477, 289);
     public static final AreaData SPENT_STAMINA_OCR_AREA = region(540, 1215, 590, 1245);
     // English "Tap anywhere to exit" hints are rendered in this lower strip on result overlays.
@@ -254,7 +256,7 @@ public final class CommonGameAreas {
 
     // ── stamina "Obtain more" dialog ─────────────────────────────────
     //
-    // Reachable both from a red deploy cost and straight from the profile stamina bar.
+    // Reachable from a red deploy cost or by tapping the City/World HUD stamina pill.
 
     public static final AreaData STAMINA_DIALOG_CURRENT     = region(340, 248, 470, 292);
     public static final AreaData STAMINA_DIALOG_ITEM_COUNT  = region(116, 535, 154, 570);
