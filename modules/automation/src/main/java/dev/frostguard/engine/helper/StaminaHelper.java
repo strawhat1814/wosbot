@@ -16,6 +16,7 @@ import dev.frostguard.vision.logging.ProfileContextLogger;
 import dev.frostguard.vision.ocr.ResilientOcrExecutor;
 
 import java.time.LocalDateTime;
+import java.util.Objects;
 
 // Orchestrates stamina tracking: OCR reads, regen delay computation,
 // availability gating, item top-ups, and travel time parsing.
@@ -60,23 +61,25 @@ public class StaminaHelper {
             emitInfo("Obtain-more dialog: synchronized tracked stamina " + tracked + " -> " + observed);
         });
         this.hudStaminaUi = (attempts, retryMs) -> {
+            // digitsOnly joins split glyphs ("1 41" → 141). The old NUMBER_PATTERN path took only
+            // the first run ("1"), so dual-read preferFuller then kept the truncated raw "41".
             Integer isolated = numberReader.attemptRecognition(
                     CommonGameAreas.STAMINA_HUD_OCR_AREA.topLeft(),
                     CommonGameAreas.STAMINA_HUD_OCR_AREA.bottomRight(),
                     attempts, retryMs,
                     CommonOCRSettings.STAMINA_HUD_ISOLATED_SETTINGS,
-                    text -> RegexNumberParser.conformsTo(text, CommonOCRSettings.NUMBER_PATTERN),
-                    text -> RegexNumberParser.extractByPattern(text, CommonOCRSettings.NUMBER_PATTERN));
+                    StaminaHudOcr::hasDigits,
+                    text -> StaminaHudOcr.parseDigits(StaminaHudOcr.digitsOnly(text)));
             Integer raw = numberReader.attemptRecognition(
                     CommonGameAreas.STAMINA_HUD_OCR_AREA.topLeft(),
                     CommonGameAreas.STAMINA_HUD_OCR_AREA.bottomRight(),
                     attempts, retryMs,
                     CommonOCRSettings.STAMINA_HUD_SETTINGS,
-                    text -> RegexNumberParser.conformsTo(text, CommonOCRSettings.NUMBER_PATTERN),
-                    text -> RegexNumberParser.extractByPattern(text, CommonOCRSettings.NUMBER_PATTERN));
+                    StaminaHudOcr::hasDigits,
+                    text -> StaminaHudOcr.parseDigits(StaminaHudOcr.digitsOnly(text)));
             Integer picked = StaminaHudOcr.preferFuller(isolated, raw);
-            if (picked != null && (isolated == null || raw == null || !picked.equals(isolated) || !picked.equals(raw))) {
-                emitDebug("HUD stamina OCR candidates isolated=" + isolated + " raw=" + raw + " picked=" + picked);
+            if (picked != null && (isolated == null || raw == null || !Objects.equals(isolated, raw))) {
+                emitInfo("HUD stamina OCR candidates isolated=" + isolated + " raw=" + raw + " picked=" + picked);
             }
             return picked;
         };
