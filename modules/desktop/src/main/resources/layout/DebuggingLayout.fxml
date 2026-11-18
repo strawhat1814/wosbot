@@ -11,7 +11,7 @@
             <StackPane styleClass="phone-frame" maxWidth="360" minHeight="620">
                 <!-- Zoomable / scrollable screen area -->
                 <ScrollPane fx:id="previewScrollPane" styleClass="preview-scroll" prefWidth="320" prefHeight="580"
-                            pannable="true" fitToWidth="false" fitToHeight="false"
+                            pannable="false" fitToWidth="false" fitToHeight="false"
                             hbarPolicy="AS_NEEDED" vbarPolicy="AS_NEEDED"
                             onScroll="#handlePreviewScroll">
                     <content>
@@ -36,7 +36,7 @@
                 <!-- Simulated Phone Notch -->
                 <StackPane styleClass="phone-notch" StackPane.alignment="TOP_CENTER"/>
             </StackPane>
-            <Label fx:id="zoomLabel" text="Zoom 1.0x  (Ctrl+scroll, double-click reset)" styleClass="zoom-hint"/>
+            <Label fx:id="zoomLabel" text="Zoom 1.0x  (Ctrl+scroll zoom, middle-drag pan, double-click reset)" styleClass="zoom-hint"/>
         </VBox>
 
         <!-- Right Side: Developer Controls / Action Panel -->

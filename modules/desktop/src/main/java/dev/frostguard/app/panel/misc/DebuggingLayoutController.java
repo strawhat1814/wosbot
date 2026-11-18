@@ -120,6 +120,9 @@ public class DebuggingLayoutController {
     private double dragStartX = -1;
     private double dragStartY = -1;
     private boolean isDragging = false;
+    private boolean isPanning = false;
+    private double panLastX = -1;
+    private double panLastY = -1;
     private boolean isCrosshairLocked = false;
     private double zoom = 1.0;
 
@@ -327,7 +330,8 @@ public class DebuggingLayoutController {
         crosshairPane.setPrefSize(containerW, containerH);
 
         if (zoomLabel != null) {
-            zoomLabel.setText(String.format("Zoom %.1fx  (Ctrl+scroll, double-click reset)", zoom));
+            zoomLabel.setText(String.format(
+                    "Zoom %.1fx  (Ctrl+scroll zoom, middle-drag pan, double-click reset)", zoom));
         }
         if (logChange) {
             log(String.format("Zoom: %.1fx", zoom));
@@ -395,9 +399,25 @@ public class DebuggingLayoutController {
             return;
         }
 
+        // Middle-button (or Alt+left) pans when zoomed; left-drag only selects.
+        if (event.getButton() == MouseButton.MIDDLE
+                || (event.getButton() == MouseButton.PRIMARY && event.isAltDown())) {
+            isPanning = true;
+            isDragging = false;
+            panLastX = event.getSceneX();
+            panLastY = event.getSceneY();
+            event.consume();
+            return;
+        }
+
+        if (event.getButton() != MouseButton.PRIMARY) {
+            return;
+        }
+
         dragStartX = event.getX();
         dragStartY = event.getY();
         isDragging = true;
+        isPanning = false;
 
         selectionBox.setX(dragStartX);
         selectionBox.setY(dragStartY);
@@ -408,11 +428,24 @@ public class DebuggingLayoutController {
         crosshairX.setVisible(false);
         crosshairY.setVisible(false);
         coordinatesLabel.setVisible(false);
+        event.consume();
     }
 
     @FXML
     private void handleMouseDragged(MouseEvent event) {
-        if (!isDragging || currentScreenshotFile == null) {
+        if (currentScreenshotFile == null) {
+            return;
+        }
+
+        if (isPanning) {
+            panPreviewBy(event.getSceneX() - panLastX, event.getSceneY() - panLastY);
+            panLastX = event.getSceneX();
+            panLastY = event.getSceneY();
+            event.consume();
+            return;
+        }
+
+        if (!isDragging) {
             return;
         }
 
@@ -432,10 +465,17 @@ public class DebuggingLayoutController {
         if (!crosshairPane.isVisible()) {
             crosshairPane.setVisible(true);
         }
+        event.consume();
     }
 
     @FXML
     private void handleMouseReleased(MouseEvent event) {
+        if (isPanning) {
+            isPanning = false;
+            event.consume();
+            return;
+        }
+
         if (!isDragging) {
             return;
         }
@@ -453,6 +493,24 @@ public class DebuggingLayoutController {
             if (name != null && !name.trim().isEmpty()) {
                 saveTemplateFromSelection();
             }
+        }
+        event.consume();
+    }
+
+    private void panPreviewBy(double deltaSceneX, double deltaSceneY) {
+        Bounds viewport = previewScrollPane.getViewportBounds();
+        double contentW = imageContainer.getPrefWidth();
+        double contentH = imageContainer.getPrefHeight();
+        double viewW = viewport.getWidth();
+        double viewH = viewport.getHeight();
+
+        if (contentW > viewW) {
+            double range = contentW - viewW;
+            previewScrollPane.setHvalue(clamp01(previewScrollPane.getHvalue() - deltaSceneX / range));
+        }
+        if (contentH > viewH) {
+            double range = contentH - viewH;
+            previewScrollPane.setVvalue(clamp01(previewScrollPane.getVvalue() - deltaSceneY / range));
         }
     }
 
