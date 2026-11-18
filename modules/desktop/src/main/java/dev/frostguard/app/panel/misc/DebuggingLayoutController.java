@@ -1,34 +1,47 @@
 package dev.frostguard.app.panel.misc;
 
+import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
 
-import dev.frostguard.vision.match.OpenCvPatternLocator;
+import javax.imageio.ImageIO;
+
+import dev.frostguard.api.domain.AccountDescriptor;
 import dev.frostguard.api.domain.ImageSearchResultData;
 import dev.frostguard.api.domain.PointData;
-import dev.frostguard.api.domain.AccountDescriptor;
 import dev.frostguard.engine.service.ProfileService;
+import dev.frostguard.vision.match.OpenCvPatternLocator;
 import dev.frostguard.vision.ocr.OcrEngine;
 
 import javafx.collections.FXCollections;
 import javafx.event.ActionEvent;
 import javafx.fxml.FXML;
+import javafx.geometry.Bounds;
+import javafx.geometry.Point2D;
 import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
+import javafx.scene.input.Clipboard;
+import javafx.scene.input.ClipboardContent;
 import javafx.scene.input.Dragboard;
-import javafx.scene.input.TransferMode;
+import javafx.scene.input.KeyCode;
+import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
+import javafx.scene.input.ScrollEvent;
+import javafx.scene.input.TransferMode;
 import javafx.scene.layout.Pane;
 import javafx.scene.layout.StackPane;
 import javafx.scene.shape.Line;
@@ -36,12 +49,20 @@ import javafx.scene.shape.Rectangle;
 
 public class DebuggingLayoutController {
 
+    private static final double BASE_VIEW_WIDTH = 316.0;
+    private static final double BASE_VIEW_HEIGHT = 576.0;
+    private static final double BASE_CONTAINER_WIDTH = 320.0;
+    private static final double BASE_CONTAINER_HEIGHT = 580.0;
+    private static final double MIN_ZOOM = 1.0;
+    private static final double MAX_ZOOM = 4.0;
+    private static final double ZOOM_STEP = 0.1;
+    private static final double POINT_DRAG_THRESHOLD = 4.0;
+
     @FXML
     private Rectangle selectionBox;
 
-    private double dragStartX = -1;
-    private double dragStartY = -1;
-    private boolean isDragging = false;
+    @FXML
+    private ScrollPane previewScrollPane;
 
     @FXML
     private StackPane imageContainer;
@@ -65,10 +86,19 @@ public class DebuggingLayoutController {
     private Label coordinatesLabel;
 
     @FXML
+    private Label zoomLabel;
+
+    @FXML
     private TextField searchTextField;
 
     @FXML
     private ListView<File> templateListView;
+
+    @FXML
+    private TextField templateNameField;
+
+    @FXML
+    private ComboBox<String> templateFolderCombo;
 
     @FXML
     private ComboBox<String> actionComboBox;
@@ -85,128 +115,273 @@ public class DebuggingLayoutController {
     @FXML
     private Button btnCaptureAdb;
 
+    private final Rectangle imageClip = new Rectangle(BASE_VIEW_WIDTH, BASE_VIEW_HEIGHT);
+
+    private double dragStartX = -1;
+    private double dragStartY = -1;
+    private boolean isDragging = false;
+    private boolean isCrosshairLocked = false;
+    private double zoom = 1.0;
+
     private File currentScreenshotFile;
+    private File templateRootDir;
     private List<File> allTemplates = new ArrayList<>();
+
+    private record ViewSize(double width, double height) {}
+
+    private record ImagePoint(int x, int y) {
+        String asPlain() {
+            return x + "," + y;
+        }
+    }
+
+    private record ImageRect(int x1, int y1, int x2, int y2) {
+        int width() {
+            return x2 - x1;
+        }
+
+        int height() {
+            return y2 - y1;
+        }
+
+        String asPlain() {
+            return x1 + "," + y1 + " - " + x2 + "," + y2;
+        }
+
+        boolean isValid() {
+            return width() > 0 && height() > 0;
+        }
+    }
 
     @FXML
     public void initialize() {
-        // Apply rounded clip to screenshot image
-        Rectangle clip = new Rectangle(316, 576);
-        clip.setArcWidth(30);
-        clip.setArcHeight(30);
-        screenshotImageView.setClip(clip);
+        imageClip.setArcWidth(30);
+        imageClip.setArcHeight(30);
+        screenshotImageView.setClip(imageClip);
 
+        applyZoomLayout(false);
         setupDragAndDrop();
         setupProfiles();
+        setupZoomHotkeys();
         loadTemplates();
         setupSearchFilter();
         setupActions();
     }
 
-    private void setupProfiles() {
-        if (profileComboBox != null) {
-            profileComboBox.setOnShowing(e -> {
-                try {
-                    List<AccountDescriptor> profiles = ProfileService.obtain().fetchAllAccounts();
-                    if (profiles != null) {
-                        AccountDescriptor currentlySelected = profileComboBox.getValue();
-                        profileComboBox.setItems(FXCollections.observableArrayList(profiles));
-                        profileComboBox.setConverter(new javafx.util.StringConverter<>() {
-                            @Override
-                            public String toString(AccountDescriptor p) {
-                                return p == null ? "" : p.getName() + " (Emulator " + p.getEmulatorNumber() + ")";
-                            }
+    private ViewSize currentViewSize() {
+        return new ViewSize(screenshotImageView.getFitWidth(), screenshotImageView.getFitHeight());
+    }
 
-                            @Override
-                            public AccountDescriptor fromString(String string) {
-                                return null;
-                            }
-                        });
-
-                        if (currentlySelected != null) {
-                            // Try to maintain selection
-                            for (AccountDescriptor p : profiles) {
-                                if (p.getEmulatorNumber() == currentlySelected.getEmulatorNumber()) {
-                                    profileComboBox.getSelectionModel().select(p);
-                                    break;
-                                }
-                            }
-                        } else if (!profiles.isEmpty()) {
-                            profileComboBox.getSelectionModel().selectFirst();
-                        }
-                    }
-                } catch (Exception ex) {
-                    log("Error loading profiles: " + ex.getMessage());
-                }
-            });
+    private ImagePoint viewToImage(double containerX, double containerY) {
+        Image img = screenshotImageView.getImage();
+        if (img == null) {
+            return null;
         }
+
+        ViewSize view = currentViewSize();
+        double offsetX = (imageContainer.getWidth() - view.width()) / 2.0;
+        double offsetY = (imageContainer.getHeight() - view.height()) / 2.0;
+
+        double relX = containerX - offsetX;
+        double relY = containerY - offsetY;
+
+        if (relX < 0 || relX > view.width() || relY < 0 || relY > view.height()) {
+            return null;
+        }
+
+        int imgX = (int) ((relX / view.width()) * img.getWidth());
+        int imgY = (int) ((relY / view.height()) * img.getHeight());
+        imgX = Math.max(0, Math.min(imgX, (int) img.getWidth() - 1));
+        imgY = Math.max(0, Math.min(imgY, (int) img.getHeight() - 1));
+        return new ImagePoint(imgX, imgY);
+    }
+
+    private ImageRect selectionToImageRect() {
+        if (selectionBox.getWidth() <= 0 || selectionBox.getHeight() <= 0 || !selectionBox.isVisible()) {
+            return null;
+        }
+        Image img = screenshotImageView.getImage();
+        if (img == null) {
+            return null;
+        }
+
+        ViewSize view = currentViewSize();
+        double offsetX = (imageContainer.getWidth() - view.width()) / 2.0;
+        double offsetY = (imageContainer.getHeight() - view.height()) / 2.0;
+
+        double relStartX = selectionBox.getX() - offsetX;
+        double relStartY = selectionBox.getY() - offsetY;
+        double relEndX = (selectionBox.getX() + selectionBox.getWidth()) - offsetX;
+        double relEndY = (selectionBox.getY() + selectionBox.getHeight()) - offsetY;
+
+        int imgStartX = (int) ((relStartX / view.width()) * img.getWidth());
+        int imgStartY = (int) ((relStartY / view.height()) * img.getHeight());
+        int imgEndX = (int) ((relEndX / view.width()) * img.getWidth());
+        int imgEndY = (int) ((relEndY / view.height()) * img.getHeight());
+
+        imgStartX = Math.max(0, Math.min(imgStartX, (int) img.getWidth() - 1));
+        imgStartY = Math.max(0, Math.min(imgStartY, (int) img.getHeight() - 1));
+        imgEndX = Math.max(0, Math.min(imgEndX, (int) img.getWidth() - 1));
+        imgEndY = Math.max(0, Math.min(imgEndY, (int) img.getHeight() - 1));
+
+        int x1 = Math.min(imgStartX, imgEndX);
+        int y1 = Math.min(imgStartY, imgEndY);
+        int x2 = Math.max(imgStartX, imgEndX);
+        int y2 = Math.max(imgStartY, imgEndY);
+        return new ImageRect(x1, y1, x2, y2);
+    }
+
+    private void copyPlain(String text) {
+        ClipboardContent content = new ClipboardContent();
+        content.putString(text);
+        Clipboard.getSystemClipboard().setContent(content);
+    }
+
+    private void setupZoomHotkeys() {
+        imageContainer.sceneProperty().addListener((obs, oldScene, newScene) -> {
+            if (newScene != null) {
+                newScene.addEventFilter(javafx.scene.input.KeyEvent.KEY_PRESSED, event -> {
+                    if (event.isShortcutDown() && event.getCode() == KeyCode.DIGIT0) {
+                        resetZoom();
+                        event.consume();
+                    }
+                });
+            }
+        });
+    }
+
+    @FXML
+    private void handlePreviewScroll(ScrollEvent event) {
+        if (!event.isControlDown()) {
+            return;
+        }
+        if (screenshotImageView.getImage() == null) {
+            event.consume();
+            return;
+        }
+
+        double oldZoom = zoom;
+        double delta = event.getDeltaY() > 0 ? ZOOM_STEP : -ZOOM_STEP;
+        double newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom + delta));
+        if (Math.abs(newZoom - oldZoom) < 0.0001) {
+            event.consume();
+            return;
+        }
+
+        // Cursor position relative to the scroll viewport, for zoom-toward-cursor.
+        Bounds viewportBounds = previewScrollPane.getViewportBounds();
+        Point2D cursorInContent = imageContainer.sceneToLocal(event.getSceneX(), event.getSceneY());
+        double contentX = cursorInContent.getX();
+        double contentY = cursorInContent.getY();
+
+        zoom = newZoom;
+        applyZoomLayout(true);
+
+        double contentWidth = imageContainer.getPrefWidth();
+        double contentHeight = imageContainer.getPrefHeight();
+        double viewW = viewportBounds.getWidth();
+        double viewH = viewportBounds.getHeight();
+
+        if (contentWidth > viewW) {
+            double targetH = (contentX * (zoom / oldZoom) - event.getX()) / (contentWidth - viewW);
+            previewScrollPane.setHvalue(clamp01(targetH));
+        }
+        if (contentHeight > viewH) {
+            double targetV = (contentY * (zoom / oldZoom) - event.getY()) / (contentHeight - viewH);
+            previewScrollPane.setVvalue(clamp01(targetV));
+        }
+
+        event.consume();
+    }
+
+    @FXML
+    private void handleMouseClicked(MouseEvent event) {
+        if (event.getButton() == MouseButton.PRIMARY && event.getClickCount() == 2) {
+            resetZoom();
+            event.consume();
+        }
+    }
+
+    private void resetZoom() {
+        zoom = 1.0;
+        applyZoomLayout(true);
+        previewScrollPane.setHvalue(0);
+        previewScrollPane.setVvalue(0);
+        log("Zoom reset to 1.0x");
+    }
+
+    private void applyZoomLayout(boolean logChange) {
+        double viewW = BASE_VIEW_WIDTH * zoom;
+        double viewH = BASE_VIEW_HEIGHT * zoom;
+        double containerW = BASE_CONTAINER_WIDTH * zoom;
+        double containerH = BASE_CONTAINER_HEIGHT * zoom;
+
+        screenshotImageView.setFitWidth(viewW);
+        screenshotImageView.setFitHeight(viewH);
+        imageClip.setWidth(viewW);
+        imageClip.setHeight(viewH);
+
+        imageContainer.setPrefSize(containerW, containerH);
+        imageContainer.setMinSize(containerW, containerH);
+        imageContainer.setMaxSize(containerW, containerH);
+        crosshairPane.setPrefSize(containerW, containerH);
+
+        if (zoomLabel != null) {
+            zoomLabel.setText(String.format("Zoom %.1fx  (Ctrl+scroll, double-click reset)", zoom));
+        }
+        if (logChange) {
+            log(String.format("Zoom: %.1fx", zoom));
+        }
+    }
+
+    private static double clamp01(double value) {
+        return Math.max(0.0, Math.min(1.0, value));
     }
 
     @FXML
     private void handleMouseMoved(MouseEvent event) {
-        if (currentScreenshotFile == null || screenshotImageView.getImage() == null)
+        if (currentScreenshotFile == null || screenshotImageView.getImage() == null) {
             return;
+        }
 
-        // Unlock if the user explicitly moves the mouse inside the container
         if (isCrosshairLocked) {
             isCrosshairLocked = false;
         }
 
-        Image img = screenshotImageView.getImage();
-        double mouseX = event.getX();
-        double mouseY = event.getY();
-
-        // Ensure coordinates are within image view bounds
-        double viewWidth = 316.0; // matched fitWidth
-        double viewHeight = 576.0; // matched fitHeight
-
-        // Offset handle logic - the imageContainer is slightly larger than the clip
-        double offsetX = (imageContainer.getWidth() - viewWidth) / 2.0;
-        double offsetY = (imageContainer.getHeight() - viewHeight) / 2.0;
-
-        double relX = mouseX - offsetX;
-        double relY = mouseY - offsetY;
-
-        if (relX < 0 || relX > viewWidth || relY < 0 || relY > viewHeight) {
+        ImagePoint point = viewToImage(event.getX(), event.getY());
+        if (point == null) {
             crosshairPane.setVisible(false);
             return;
         }
 
-        double origWidth = img.getWidth();
-        double origHeight = img.getHeight();
+        showCrosshairAtContainer(event.getX(), event.getY(), point.x(), point.y());
+    }
 
-        int imgX = (int) ((relX / viewWidth) * origWidth);
-        int imgY = (int) ((relY / viewHeight) * origHeight);
-
-        imgX = Math.max(0, Math.min(imgX, (int) origWidth - 1));
-        imgY = Math.max(0, Math.min(imgY, (int) origHeight - 1));
-
+    private void showCrosshairAtContainer(double containerX, double containerY, int imgX, int imgY) {
         crosshairX.setStartX(0);
         crosshairX.setEndX(imageContainer.getWidth());
-        crosshairX.setStartY(mouseY);
-        crosshairX.setEndY(mouseY);
+        crosshairX.setStartY(containerY);
+        crosshairX.setEndY(containerY);
 
-        crosshairY.setStartX(mouseX);
-        crosshairY.setEndX(mouseX);
+        crosshairY.setStartX(containerX);
+        crosshairY.setEndX(containerX);
         crosshairY.setStartY(0);
         crosshairY.setEndY(imageContainer.getHeight());
 
         coordinatesLabel.setText(String.format("X: %d\nY: %d", imgX, imgY));
 
-        // Keep label within bounds
-        double labelX = mouseX + 15;
-        double labelY = mouseY + 15;
+        double labelX = containerX + 15;
+        double labelY = containerY + 15;
         if (labelX + coordinatesLabel.getWidth() > imageContainer.getWidth()) {
-            labelX = mouseX - 15 - coordinatesLabel.getWidth();
+            labelX = containerX - 15 - coordinatesLabel.getWidth();
         }
         if (labelY + coordinatesLabel.getHeight() > imageContainer.getHeight()) {
-            labelY = mouseY - 15 - coordinatesLabel.getHeight();
+            labelY = containerY - 15 - coordinatesLabel.getHeight();
         }
-
         coordinatesLabel.setLayoutX(labelX);
         coordinatesLabel.setLayoutY(labelY);
 
-        if (!crosshairPane.isVisible() && !isDragging) {
+        if (!isDragging) {
             crosshairPane.setVisible(true);
             crosshairX.setVisible(true);
             crosshairY.setVisible(true);
@@ -216,8 +391,9 @@ public class DebuggingLayoutController {
 
     @FXML
     private void handleMousePressed(MouseEvent event) {
-        if (currentScreenshotFile == null || screenshotImageView.getImage() == null)
+        if (currentScreenshotFile == null || screenshotImageView.getImage() == null) {
             return;
+        }
 
         dragStartX = event.getX();
         dragStartY = event.getY();
@@ -229,7 +405,6 @@ public class DebuggingLayoutController {
         selectionBox.setHeight(0);
         selectionBox.setVisible(true);
 
-        // Hide crosshair lines when dragging
         crosshairX.setVisible(false);
         crosshairY.setVisible(false);
         coordinatesLabel.setVisible(false);
@@ -237,15 +412,12 @@ public class DebuggingLayoutController {
 
     @FXML
     private void handleMouseDragged(MouseEvent event) {
-        if (!isDragging || currentScreenshotFile == null)
+        if (!isDragging || currentScreenshotFile == null) {
             return;
+        }
 
-        double currentX = event.getX();
-        double currentY = event.getY();
-
-        // Clamp to imageContainer bounds
-        currentX = Math.max(0, Math.min(currentX, imageContainer.getWidth()));
-        currentY = Math.max(0, Math.min(currentY, imageContainer.getHeight()));
+        double currentX = Math.max(0, Math.min(event.getX(), imageContainer.getWidth()));
+        double currentY = Math.max(0, Math.min(event.getY(), imageContainer.getHeight()));
 
         double x = Math.min(dragStartX, currentX);
         double y = Math.min(dragStartY, currentY);
@@ -264,12 +436,23 @@ public class DebuggingLayoutController {
 
     @FXML
     private void handleMouseReleased(MouseEvent event) {
-        if (!isDragging)
+        if (!isDragging) {
             return;
+        }
         isDragging = false;
 
-        if ("OCR".equals(actionComboBox.getValue())) {
+        String action = actionComboBox.getValue();
+        if ("OCR".equals(action)) {
             performOCROnSelection();
+        } else if ("Copy Point".equals(action)) {
+            copyPointFromInteraction(event.getX(), event.getY());
+        } else if ("Copy Region".equals(action)) {
+            copyRegionFromSelection();
+        } else if ("Save Template".equals(action)) {
+            String name = templateNameField != null ? templateNameField.getText() : null;
+            if (name != null && !name.trim().isEmpty()) {
+                saveTemplateFromSelection();
+            }
         }
     }
 
@@ -352,8 +535,8 @@ public class DebuggingLayoutController {
         imageContainer.sceneProperty().addListener((obs, oldScene, newScene) -> {
             if (newScene != null) {
                 newScene.addEventFilter(javafx.scene.input.KeyEvent.KEY_PRESSED, event -> {
-                    if (event.isShortcutDown() && event.getCode() == javafx.scene.input.KeyCode.V) {
-                        javafx.scene.input.Clipboard clipboard = javafx.scene.input.Clipboard.getSystemClipboard();
+                    if (event.isShortcutDown() && event.getCode() == KeyCode.V) {
+                        Clipboard clipboard = Clipboard.getSystemClipboard();
                         if (clipboard.hasImage()) {
                             Image image = clipboard.getImage();
                             screenshotImageView.setImage(image);
@@ -361,7 +544,7 @@ public class DebuggingLayoutController {
                             try {
                                 File tempFile = File.createTempFile("clipboard_screenshot", ".png");
                                 tempFile.deleteOnExit();
-                                javax.imageio.ImageIO.write(javafx.embed.swing.SwingFXUtils.fromFXImage(image, null), "png", tempFile);
+                                ImageIO.write(javafx.embed.swing.SwingFXUtils.fromFXImage(image, null), "png", tempFile);
                                 currentScreenshotFile = tempFile;
                                 log("Loaded screenshot from clipboard");
                                 log("Size: " + image.getWidth() + "x" + image.getHeight());
@@ -371,7 +554,8 @@ public class DebuggingLayoutController {
                         } else if (clipboard.hasFiles()) {
                             for (File file : clipboard.getFiles()) {
                                 String name = file.getName().toLowerCase();
-                                if (name.endsWith(".png") || name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".bmp")) {
+                                if (name.endsWith(".png") || name.endsWith(".jpg") || name.endsWith(".jpeg")
+                                        || name.endsWith(".bmp")) {
                                     loadScreenshot(file);
                                     break;
                                 }
@@ -381,6 +565,44 @@ public class DebuggingLayoutController {
                 });
             }
         });
+    }
+
+    private void setupProfiles() {
+        if (profileComboBox != null) {
+            profileComboBox.setOnShowing(e -> {
+                try {
+                    List<AccountDescriptor> profiles = ProfileService.obtain().fetchAllAccounts();
+                    if (profiles != null) {
+                        AccountDescriptor currentlySelected = profileComboBox.getValue();
+                        profileComboBox.setItems(FXCollections.observableArrayList(profiles));
+                        profileComboBox.setConverter(new javafx.util.StringConverter<>() {
+                            @Override
+                            public String toString(AccountDescriptor p) {
+                                return p == null ? "" : p.getName() + " (Emulator " + p.getEmulatorNumber() + ")";
+                            }
+
+                            @Override
+                            public AccountDescriptor fromString(String string) {
+                                return null;
+                            }
+                        });
+
+                        if (currentlySelected != null) {
+                            for (AccountDescriptor p : profiles) {
+                                if (p.getEmulatorNumber() == currentlySelected.getEmulatorNumber()) {
+                                    profileComboBox.getSelectionModel().select(p);
+                                    break;
+                                }
+                            }
+                        } else if (!profiles.isEmpty()) {
+                            profileComboBox.getSelectionModel().selectFirst();
+                        }
+                    }
+                } catch (Exception ex) {
+                    log("Error loading profiles: " + ex.getMessage());
+                }
+            });
+        }
     }
 
     private void loadScreenshot(File file) {
@@ -409,18 +631,19 @@ public class DebuggingLayoutController {
             currentDir = currentDir.getParentFile();
         }
 
-        File templateDir = null;
+        templateRootDir = null;
         for (File dir : possibleTemplateDirs) {
             if (dir.exists() && dir.isDirectory()) {
-                templateDir = dir;
+                templateRootDir = dir;
                 break;
             }
         }
 
         allTemplates.clear();
-        if (templateDir != null && templateDir.exists() && templateDir.isDirectory()) {
-            findImageFiles(templateDir, allTemplates);
+        if (templateRootDir != null) {
+            findImageFiles(templateRootDir, allTemplates);
             log("Found " + allTemplates.size() + " templates.");
+            refreshTemplateFolderCombo();
         } else {
             log("Template directory not found. Please verify location.");
             log("User Dir: " + System.getProperty("user.dir"));
@@ -428,7 +651,7 @@ public class DebuggingLayoutController {
 
         templateListView.getItems().setAll(allTemplates);
         templateListView.setCellFactory(param -> new ListCell<File>() {
-            private ImageView imageView = new ImageView();
+            private final ImageView imageView = new ImageView();
 
             @Override
             protected void updateItem(File file, boolean empty) {
@@ -450,6 +673,28 @@ public class DebuggingLayoutController {
         });
     }
 
+    private void refreshTemplateFolderCombo() {
+        if (templateFolderCombo == null || templateRootDir == null) {
+            return;
+        }
+        List<String> folders = new ArrayList<>();
+        folders.add("(templates root)");
+        File[] children = templateRootDir.listFiles(File::isDirectory);
+        if (children != null) {
+            Arrays.sort(children, Comparator.comparing(File::getName, String.CASE_INSENSITIVE_ORDER));
+            for (File child : children) {
+                folders.add(child.getName());
+            }
+        }
+        String selected = templateFolderCombo.getValue();
+        templateFolderCombo.setItems(FXCollections.observableArrayList(folders));
+        if (selected != null && folders.contains(selected)) {
+            templateFolderCombo.getSelectionModel().select(selected);
+        } else {
+            templateFolderCombo.getSelectionModel().selectFirst();
+        }
+    }
+
     private void findImageFiles(File dir, List<File> list) {
         File[] files = dir.listFiles();
         if (files != null) {
@@ -467,26 +712,34 @@ public class DebuggingLayoutController {
     }
 
     private void setupActions() {
-        actionComboBox.setItems(FXCollections.observableArrayList("Template Search", "OCR"));
+        actionComboBox.setItems(FXCollections.observableArrayList(
+                "Template Search", "OCR", "Copy Point", "Copy Region", "Save Template"));
         actionComboBox.getSelectionModel().selectFirst();
-        
-        // pernerch/2026-07-02: Dynamic visibility control for template search UI elements
-        // Template list and search field are only shown when "Template Search" action is selected
-        // This prevents UI clutter when using OCR mode
-        actionComboBox.valueProperty().addListener((observable, oldValue, newValue) -> {
-            boolean isTemplateSearch = "Template Search".equals(newValue);
-            searchTextField.setVisible(isTemplateSearch);
-            searchTextField.setManaged(isTemplateSearch);
-            templateListView.setVisible(isTemplateSearch);
-            templateListView.setManaged(isTemplateSearch);
-        });
-        
-        // Initialize visibility based on initial selection
-        boolean isTemplateSearch = "Template Search".equals(actionComboBox.getValue());
+
+        actionComboBox.valueProperty().addListener((observable, oldValue, newValue) -> updateActionVisibility(newValue));
+        updateActionVisibility(actionComboBox.getValue());
+    }
+
+    private void updateActionVisibility(String action) {
+        boolean isTemplateSearch = "Template Search".equals(action);
+        boolean isSaveTemplate = "Save Template".equals(action);
+
         searchTextField.setVisible(isTemplateSearch);
         searchTextField.setManaged(isTemplateSearch);
         templateListView.setVisible(isTemplateSearch);
         templateListView.setManaged(isTemplateSearch);
+
+        templateNameField.setVisible(isSaveTemplate);
+        templateNameField.setManaged(isSaveTemplate);
+        templateFolderCombo.setVisible(isSaveTemplate);
+        templateFolderCombo.setManaged(isSaveTemplate);
+
+        if (isSaveTemplate) {
+            btnRunAction.setText("Save");
+            refreshTemplateFolderCombo();
+        } else {
+            btnRunAction.setText("Run");
+        }
     }
 
     @FXML
@@ -495,6 +748,31 @@ public class DebuggingLayoutController {
 
         if ("OCR".equals(action)) {
             performOCROnSelection();
+            return;
+        }
+        if ("Copy Point".equals(action)) {
+            if (selectionBox.isVisible() && selectionBox.getWidth() <= POINT_DRAG_THRESHOLD
+                    && selectionBox.getHeight() <= POINT_DRAG_THRESHOLD) {
+                copyPointFromInteraction(selectionBox.getX(), selectionBox.getY());
+            } else if (selectionBox.isVisible()) {
+                ImageRect rect = selectionToImageRect();
+                if (rect != null && rect.isValid()) {
+                    ImagePoint center = new ImagePoint(rect.x1() + rect.width() / 2, rect.y1() + rect.height() / 2);
+                    copyPoint(center);
+                } else {
+                    log("Error: Click a point on the screenshot first.");
+                }
+            } else {
+                log("Error: Click a point on the screenshot first.");
+            }
+            return;
+        }
+        if ("Copy Region".equals(action)) {
+            copyRegionFromSelection();
+            return;
+        }
+        if ("Save Template".equals(action)) {
+            saveTemplateFromSelection();
             return;
         }
 
@@ -513,7 +791,6 @@ public class DebuggingLayoutController {
         log("Running action: " + action + " with template: " + template.getName());
 
         try {
-            // Get relative path for OpenCvPatternLocator, e.g., /templates/home/petsButton.png
             String absPath = template.getAbsolutePath().replace("\\", "/");
             int templatesIndex = absPath.indexOf("/templates/");
             if (templatesIndex == -1) {
@@ -524,7 +801,6 @@ public class DebuggingLayoutController {
 
             byte[] screenshotBytes = Files.readAllBytes(currentScreenshotFile.toPath());
 
-            // Assuming we search the whole screenshot image
             Image img = screenshotImageView.getImage();
             int width = (int) img.getWidth();
             int height = (int) img.getHeight();
@@ -535,8 +811,6 @@ public class DebuggingLayoutController {
             if (result.isFound()) {
                 log("Match Found! Coordinates: X=" + result.getPoint().getX() + ", Y=" + result.getPoint().getY()
                         + " (Accuracy: " + String.format("%.2f", result.getMatchPercentage()) + "%)");
-
-                // Pin Crosshair at found location
                 displayCrosshairAt((int) result.getPoint().getX(), (int) result.getPoint().getY());
             } else {
                 log("No match found. Best Match: " + String.format("%.2f", result.getMatchPercentage()) + "%");
@@ -547,62 +821,132 @@ public class DebuggingLayoutController {
         }
     }
 
-    private boolean isCrosshairLocked = false;
+    private void copyPointFromInteraction(double containerX, double containerY) {
+        boolean tinySelection = selectionBox.isVisible()
+                && selectionBox.getWidth() <= POINT_DRAG_THRESHOLD
+                && selectionBox.getHeight() <= POINT_DRAG_THRESHOLD;
+
+        ImagePoint point;
+        if (tinySelection || !selectionBox.isVisible() || selectionBox.getWidth() <= 0) {
+            point = viewToImage(containerX, containerY);
+        } else {
+            ImageRect rect = selectionToImageRect();
+            if (rect == null || !rect.isValid()) {
+                point = viewToImage(containerX, containerY);
+            } else {
+                point = new ImagePoint(rect.x1() + rect.width() / 2, rect.y1() + rect.height() / 2);
+            }
+        }
+
+        if (point == null) {
+            log("Error: Click inside the screenshot to copy a point.");
+            return;
+        }
+        copyPoint(point);
+    }
+
+    private void copyPoint(ImagePoint point) {
+        String plain = point.asPlain();
+        copyPlain(plain);
+        log("Copied point: " + plain);
+        displayCrosshairAt(point.x(), point.y());
+    }
+
+    private void copyRegionFromSelection() {
+        ImageRect rect = selectionToImageRect();
+        if (rect == null || !rect.isValid()) {
+            log("Error: Drag a region on the screenshot first.");
+            return;
+        }
+        String plain = rect.asPlain();
+        copyPlain(plain);
+        log("Copied region: " + plain);
+    }
+
+    private void saveTemplateFromSelection() {
+        if (currentScreenshotFile == null || screenshotImageView.getImage() == null) {
+            log("Error: No screenshot loaded.");
+            return;
+        }
+        if (templateRootDir == null) {
+            log("Error: Template directory not found.");
+            return;
+        }
+
+        ImageRect rect = selectionToImageRect();
+        if (rect == null || !rect.isValid()) {
+            log("Error: Drag a region to crop before saving a template.");
+            return;
+        }
+
+        String rawName = templateNameField.getText() == null ? "" : templateNameField.getText().trim();
+        if (rawName.isEmpty()) {
+            log("Error: Enter a template filename first.");
+            return;
+        }
+        if (!rawName.toLowerCase().endsWith(".png")
+                && !rawName.toLowerCase().endsWith(".jpg")
+                && !rawName.toLowerCase().endsWith(".bmp")) {
+            rawName = rawName + ".png";
+        }
+        if (rawName.contains("..") || rawName.contains("/") || rawName.contains("\\")) {
+            log("Error: Filename must not contain path separators.");
+            return;
+        }
+
+        String folder = templateFolderCombo.getValue();
+        File targetDir = templateRootDir;
+        if (folder != null && !folder.isEmpty() && !"(templates root)".equals(folder)) {
+            targetDir = new File(templateRootDir, folder);
+            if (!targetDir.exists() || !targetDir.isDirectory()) {
+                log("Error: Subfolder does not exist: " + folder);
+                return;
+            }
+        }
+
+        File targetFile = new File(targetDir, rawName);
+        try {
+            BufferedImage source = ImageIO.read(currentScreenshotFile);
+            if (source == null) {
+                log("Error: Could not read screenshot image for cropping.");
+                return;
+            }
+            BufferedImage crop = source.getSubimage(rect.x1(), rect.y1(), rect.width(), rect.height());
+            String format = rawName.toLowerCase().endsWith(".jpg") ? "jpg"
+                    : rawName.toLowerCase().endsWith(".bmp") ? "bmp" : "png";
+            ImageIO.write(crop, format, targetFile);
+
+            log("Saved template: " + targetFile.getAbsolutePath());
+            log("Crop region: " + rect.asPlain() + " (" + rect.width() + "x" + rect.height() + ")");
+            loadTemplates();
+            if (searchTextField != null && !searchTextField.getText().isBlank()) {
+                searchTextField.setText(searchTextField.getText());
+            }
+        } catch (Exception e) {
+            log("Error saving template: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
 
     private void displayCrosshairAt(int imgX, int imgY) {
-        if (screenshotImageView.getImage() == null || imageContainer == null)
+        if (screenshotImageView.getImage() == null || imageContainer == null) {
             return;
+        }
 
         Image screenshotImage = screenshotImageView.getImage();
+        ViewSize view = currentViewSize();
 
-        double viewWidth = 316.0; // matched fitWidth
-        double viewHeight = 576.0; // matched fitHeight
+        double offsetX = (imageContainer.getWidth() - view.width()) / 2.0;
+        double offsetY = (imageContainer.getHeight() - view.height()) / 2.0;
 
-        // Offset logic - imageContainer vs clip
-        double offsetX = (imageContainer.getWidth() - viewWidth) / 2.0;
-        double offsetY = (imageContainer.getHeight() - viewHeight) / 2.0;
-
-        double origWidth = screenshotImage.getWidth();
-        double origHeight = screenshotImage.getHeight();
-
-        double relX = (imgX / origWidth) * viewWidth;
-        double relY = (imgY / origHeight) * viewHeight;
+        double relX = (imgX / screenshotImage.getWidth()) * view.width();
+        double relY = (imgY / screenshotImage.getHeight()) * view.height();
 
         double uiX = relX + offsetX;
         double uiY = relY + offsetY;
 
-        // Force crosshair lines onto UI coordinate position
-        crosshairX.setStartX(0);
-        crosshairX.setEndX(imageContainer.getWidth());
-        crosshairX.setStartY(uiY);
-        crosshairX.setEndY(uiY);
-
-        crosshairY.setStartX(uiX);
-        crosshairY.setEndX(uiX);
-        crosshairY.setStartY(0);
-        crosshairY.setEndY(imageContainer.getHeight());
-
-        coordinatesLabel.setText(String.format("X: %d\nY: %d", imgX, imgY));
-
-        // Keep label within bounds
-        double labelX = uiX + 15;
-        double labelY = uiY + 15;
-        if (labelX + coordinatesLabel.getWidth() > imageContainer.getWidth()) {
-            labelX = uiX - 15 - coordinatesLabel.getWidth();
-        }
-        if (labelY + coordinatesLabel.getHeight() > imageContainer.getHeight()) {
-            labelY = uiY - 15 - coordinatesLabel.getHeight();
-        }
-
-        coordinatesLabel.setLayoutX(labelX);
-        coordinatesLabel.setLayoutY(labelY);
-
-        crosshairPane.setVisible(true);
-        crosshairX.setVisible(true);
-        crosshairY.setVisible(true);
-        coordinatesLabel.setVisible(true);
-
-        isCrosshairLocked = true; // Block hover from hiding immediately
+        showCrosshairAtContainer(uiX, uiY, imgX, imgY);
+        isCrosshairLocked = true;
     }
 
     private void performOCROnSelection() {
@@ -610,52 +954,19 @@ public class DebuggingLayoutController {
             log("Error: No screenshot loaded.");
             return;
         }
-        if (selectionBox.getWidth() <= 0 || selectionBox.getHeight() <= 0 || !selectionBox.isVisible()) {
+
+        ImageRect rect = selectionToImageRect();
+        if (rect == null || !rect.isValid()) {
             log("Error: No region selected. Please click and drag to select a region.");
             return;
         }
 
-        double viewWidth = 316.0;
-        double viewHeight = 576.0;
-
-        double offsetX = (imageContainer.getWidth() - viewWidth) / 2.0;
-        double offsetY = (imageContainer.getHeight() - viewHeight) / 2.0;
-
-        Image img = screenshotImageView.getImage();
-        double origWidth = img.getWidth();
-        double origHeight = img.getHeight();
-
-        double relStartX = selectionBox.getX() - offsetX;
-        double relStartY = selectionBox.getY() - offsetY;
-
-        int imgStartX = (int) ((relStartX / viewWidth) * origWidth);
-        int imgStartY = (int) ((relStartY / viewHeight) * origHeight);
-
-        double relEndX = (selectionBox.getX() + selectionBox.getWidth()) - offsetX;
-        double relEndY = (selectionBox.getY() + selectionBox.getHeight()) - offsetY;
-
-        int imgEndX = (int) ((relEndX / viewWidth) * origWidth);
-        int imgEndY = (int) ((relEndY / viewHeight) * origHeight);
-
-        imgStartX = Math.max(0, Math.min(imgStartX, (int) origWidth - 1));
-        imgStartY = Math.max(0, Math.min(imgStartY, (int) origHeight - 1));
-        imgEndX = Math.max(0, Math.min(imgEndX, (int) origWidth - 1));
-        imgEndY = Math.max(0, Math.min(imgEndY, (int) origHeight - 1));
-
-        int width = imgEndX - imgStartX;
-        int height = imgEndY - imgStartY;
-
-        if (width <= 0 || height <= 0) {
-            log("Invalid region selected for OCR.");
-            return;
-        }
-
-        log(String.format("Performing OCR on Region: TopLeft(%d, %d), BottomRight(%d, %d)", imgStartX, imgStartY,
-                imgEndX, imgEndY));
+        log(String.format("Performing OCR on Region: TopLeft(%d, %d), BottomRight(%d, %d)",
+                rect.x1(), rect.y1(), rect.x2(), rect.y2()));
 
         try {
-            String result = OcrEngine.readFromFile(currentScreenshotFile, imgStartX, imgStartY,
-                    width, height, "eng");
+            String result = OcrEngine.readFromFile(currentScreenshotFile, rect.x1(), rect.y1(),
+                    rect.width(), rect.height(), "eng");
             log("OCR Output:\n" + result);
         } catch (Exception e) {
             log("OCR Error: " + e.getMessage());
@@ -679,33 +990,30 @@ public class DebuggingLayoutController {
             });
 
             try {
-                // Initialize backend if this is run independently before the engine starts
                 try {
-                    dev.frostguard.engine.emulator.EmulatorController.getInstance().captureScreen(selected.getEmulatorNumber());
+                    dev.frostguard.engine.emulator.EmulatorController.getInstance()
+                            .captureScreen(selected.getEmulatorNumber());
                 } catch (IllegalStateException e) {
                     if (e.getMessage().contains("Backend not initialised")) {
                         dev.frostguard.engine.emulator.EmulatorController.getInstance().initialize();
                     }
                 }
 
-                // We use EmulatorController to get the raw image dynamically
-                dev.frostguard.api.domain.RawImageData rawImage = dev.frostguard.engine.emulator.EmulatorController.getInstance()
-                        .captureScreen(selected.getEmulatorNumber());
+                dev.frostguard.api.domain.RawImageData rawImage = dev.frostguard.engine.emulator.EmulatorController
+                        .getInstance().captureScreen(selected.getEmulatorNumber());
 
                 if (rawImage != null) {
-                    java.awt.image.BufferedImage bImg = dev.frostguard.vision.convert.ImageConverter.toBufferedImage(rawImage);
+                    BufferedImage bImg = dev.frostguard.vision.convert.ImageConverter.toBufferedImage(rawImage);
 
                     File tempFile = File.createTempFile("adb_screenshot", ".png");
-                    javax.imageio.ImageIO.write(bImg, "png", tempFile);
+                    ImageIO.write(bImg, "png", tempFile);
 
                     javafx.application.Platform.runLater(() -> {
                         log("Success: Saved to temporary file " + tempFile.getAbsolutePath());
                         loadScreenshot(tempFile);
                     });
                 } else {
-                    javafx.application.Platform.runLater(() -> {
-                        log("Error: Failed to capture ADB image.");
-                    });
+                    javafx.application.Platform.runLater(() -> log("Error: Failed to capture ADB image."));
                 }
             } catch (Exception e) {
                 javafx.application.Platform.runLater(() -> {
@@ -713,9 +1021,7 @@ public class DebuggingLayoutController {
                     e.printStackTrace();
                 });
             } finally {
-                javafx.application.Platform.runLater(() -> {
-                    btnCaptureAdb.setDisable(false);
-                });
+                javafx.application.Platform.runLater(() -> btnCaptureAdb.setDisable(false));
             }
         });
         captureThread.start();

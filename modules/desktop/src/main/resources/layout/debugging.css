@@ -37,6 +37,36 @@
     -fx-translate-y: -20;
 }
 
+/* Zoomable preview viewport inside the phone frame */
+.preview-scroll {
+    -fx-background-color: transparent;
+    -fx-background: transparent;
+    -fx-padding: 0;
+    -fx-background-radius: 20;
+}
+
+.preview-scroll > .viewport {
+    -fx-background-color: transparent;
+}
+
+.preview-scroll .scroll-bar:vertical,
+.preview-scroll .scroll-bar:horizontal {
+    -fx-background-color: transparent;
+    -fx-pref-width: 8;
+    -fx-pref-height: 8;
+}
+
+.preview-scroll .scroll-bar .thumb {
+    -fx-background-color: #3a3d4a;
+    -fx-background-radius: 4;
+}
+
+.zoom-hint {
+    -fx-text-fill: #a9adbb;
+    -fx-font-size: 11px;
+    -fx-padding: 8 0 0 0;
+}
+
 /* Internal drop area styling (The Screen) */
 .drop-zone {
     -fx-background-color: #1a1a1a;

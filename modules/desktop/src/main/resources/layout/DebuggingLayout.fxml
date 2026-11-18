@@ -2,7 +2,6 @@
 <?import javafx.scene.control.*?>
 <?import javafx.scene.layout.*?>
 <?import javafx.scene.image.ImageView?>
-<?import javafx.geometry.Insets?>
 
 <SplitPane styleClass="split-pane" stylesheets="@debugging.css" dividerPositions="0.40" VBox.vgrow="ALWAYS" xmlns="http://javafx.com/javafx/23.0.1" xmlns:fx="http://javafx.com/fxml/1">
     <items>
@@ -10,29 +9,39 @@
         <VBox alignment="CENTER" styleClass="phone-container">
             <!-- Simulated Phone Frame -->
             <StackPane styleClass="phone-frame" maxWidth="360" minHeight="620">
-                <!-- Inner Screen Area -->
-                <StackPane fx:id="imageContainer" styleClass="drop-zone" prefWidth="320" prefHeight="580" VBox.vgrow="ALWAYS" onMouseMoved="#handleMouseMoved" onMouseEntered="#handleMouseEntered" onMouseExited="#handleMouseExited" onMousePressed="#handleMousePressed" onMouseDragged="#handleMouseDragged" onMouseReleased="#handleMouseReleased">
-                    <!-- The actual Image -->
-                    <ImageView fx:id="screenshotImageView" fitWidth="316" fitHeight="576" pickOnBounds="true" preserveRatio="false" styleClass="image-view-rounded" />
-                    <!-- Hint Text -->
-                    <Label fx:id="dragDropHint" text="Drag &amp; Drop Screenshot" wrapText="true" textAlignment="CENTER" styleClass="hint-text" />
-                    
-                    <!-- Crosshair Overlay -->
-                    <Pane fx:id="crosshairPane" mouseTransparent="true" visible="false" prefWidth="320" prefHeight="580">
-                        <javafx.scene.shape.Rectangle fx:id="selectionBox" styleClass="selection-box" visible="false" />
-                        <javafx.scene.shape.Line fx:id="crosshairX" styleClass="crosshair-line" visible="false" />
-                        <javafx.scene.shape.Line fx:id="crosshairY" styleClass="crosshair-line" visible="false" />
-                        <Label fx:id="coordinatesLabel" text="X: 0, Y: 0" styleClass="coordinates-label" visible="false" />
-                    </Pane>
-                </StackPane>
+                <!-- Zoomable / scrollable screen area -->
+                <ScrollPane fx:id="previewScrollPane" styleClass="preview-scroll" prefWidth="320" prefHeight="580"
+                            pannable="true" fitToWidth="false" fitToHeight="false"
+                            hbarPolicy="AS_NEEDED" vbarPolicy="AS_NEEDED"
+                            onScroll="#handlePreviewScroll">
+                    <content>
+                        <StackPane fx:id="imageContainer" styleClass="drop-zone" prefWidth="320" prefHeight="580"
+                                   onMouseMoved="#handleMouseMoved" onMouseEntered="#handleMouseEntered"
+                                   onMouseExited="#handleMouseExited" onMousePressed="#handleMousePressed"
+                                   onMouseDragged="#handleMouseDragged" onMouseReleased="#handleMouseReleased"
+                                   onMouseClicked="#handleMouseClicked">
+                            <ImageView fx:id="screenshotImageView" fitWidth="316" fitHeight="576" pickOnBounds="true"
+                                       preserveRatio="false" styleClass="image-view-rounded"/>
+                            <Label fx:id="dragDropHint" text="Drag &amp; Drop Screenshot" wrapText="true"
+                                   textAlignment="CENTER" styleClass="hint-text"/>
+                            <Pane fx:id="crosshairPane" mouseTransparent="true" visible="false" prefWidth="320" prefHeight="580">
+                                <javafx.scene.shape.Rectangle fx:id="selectionBox" styleClass="selection-box" visible="false"/>
+                                <javafx.scene.shape.Line fx:id="crosshairX" styleClass="crosshair-line" visible="false"/>
+                                <javafx.scene.shape.Line fx:id="crosshairY" styleClass="crosshair-line" visible="false"/>
+                                <Label fx:id="coordinatesLabel" text="X: 0, Y: 0" styleClass="coordinates-label" visible="false"/>
+                            </Pane>
+                        </StackPane>
+                    </content>
+                </ScrollPane>
                 <!-- Simulated Phone Notch -->
-                <StackPane styleClass="phone-notch" StackPane.alignment="TOP_CENTER" />
+                <StackPane styleClass="phone-notch" StackPane.alignment="TOP_CENTER"/>
             </StackPane>
+            <Label fx:id="zoomLabel" text="Zoom 1.0x  (Ctrl+scroll, double-click reset)" styleClass="zoom-hint"/>
         </VBox>
 
         <!-- Right Side: Developer Controls / Action Panel -->
         <VBox spacing="16.0" styleClass="controls-card" alignment="TOP_CENTER" VBox.vgrow="ALWAYS">
-            
+
             <!-- ADB Extraction Tools -->
             <VBox spacing="12.0" styleClass="module-card">
                 <Label text="ADB &amp; Profile" styleClass="module-title"/>
@@ -47,15 +56,14 @@
                     <Button fx:id="btnCaptureAdb" mnemonicParsing="false" text="Capture" onAction="#handleCaptureAdb" styleClass="compact-button" GridPane.rowIndex="0" GridPane.columnIndex="2"/>
                 </GridPane>
             </VBox>
-                        
+
             <!-- Image Recognition Tools -->
-            <!-- pernerch/2026-07-02: Fixed debugging UI - templates list now visible only when "Template Search" is selected -->
             <VBox spacing="12.0" styleClass="module-card" VBox.vgrow="ALWAYS">
                 <Label text="Image Recognition" styleClass="module-title"/>
-                <!-- pernerch/2026-07-02: Template search field initially hidden, shown via listener when action changes -->
                 <TextField fx:id="searchTextField" promptText="Search template..." styleClass="text-field" visible="false" managed="false"/>
-                <!-- pernerch/2026-07-02: Template list grows to fill available space and is visible only for Template Search mode -->
                 <ListView fx:id="templateListView" VBox.vgrow="ALWAYS" styleClass="list-view" visible="false" managed="false"/>
+                <TextField fx:id="templateNameField" promptText="Template filename (e.g. myIcon.png)" styleClass="text-field" visible="false" managed="false"/>
+                <ComboBox fx:id="templateFolderCombo" maxWidth="Infinity" promptText="Subfolder (optional)" styleClass="combo-box" visible="false" managed="false"/>
                 <HBox spacing="10" alignment="CENTER_LEFT">
                     <ComboBox fx:id="actionComboBox" maxWidth="Infinity" promptText="Choose Action" styleClass="combo-box" HBox.hgrow="ALWAYS"/>
                     <Button fx:id="btnRunAction" mnemonicParsing="false" text="Run" onAction="#handleRunAction" styleClass="compact-button"/>
@@ -65,7 +73,7 @@
             <!-- Logging / Terminal -->
             <VBox spacing="10.0" VBox.vgrow="ALWAYS" styleClass="module-card">
                 <Label text="System Logs" styleClass="module-title"/>
-                <TextArea fx:id="logTextArea" editable="false" promptText="Logs will appear here..." styleClass="terminal-text-area" wrapText="true" VBox.vgrow="ALWAYS" />
+                <TextArea fx:id="logTextArea" editable="false" promptText="Logs will appear here..." styleClass="terminal-text-area" wrapText="true" VBox.vgrow="ALWAYS"/>
             </VBox>
         </VBox>
     </items>
