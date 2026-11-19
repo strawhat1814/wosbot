@@ -39,9 +39,16 @@ public enum TpDailyTaskEnum {
 
     /* ── chief orders ── */
 
-    CHIEF_ORDER_PRODUCTIVITY_DAY   (302, "Chief Order: Productivity Day",    ConfigurationKeyEnum.BOOL_CHIEF_ORDER_PRODUCTIVITY_DAY,    RoutineCategory.CHIEF_ORDER),
-    CHIEF_ORDER_RUSH_JOB           (300, "Chief Order: Rush Job",           ConfigurationKeyEnum.BOOL_CHIEF_ORDER_RUSH_JOB,            RoutineCategory.CHIEF_ORDER),
     CHIEF_ORDER_URGENT_MOBILIZATION(301, "Chief Order: Urgent Mobilization", ConfigurationKeyEnum.BOOL_CHIEF_ORDER_URGENT_MOBILISATION, RoutineCategory.CHIEF_ORDER),
+    CHIEF_ORDER_RUSH_JOB           (300, "Chief Order: Rush Job",           ConfigurationKeyEnum.BOOL_CHIEF_ORDER_RUSH_JOB,            RoutineCategory.CHIEF_ORDER),
+    CHIEF_ORDER_DOUBLE_TIME        (303, "Chief Order: Double Time",        ConfigurationKeyEnum.BOOL_CHIEF_ORDER_DOUBLE_TIME,         RoutineCategory.CHIEF_ORDER),
+    CHIEF_ORDER_PRODUCTIVITY_DAY   (302, "Chief Order: Productivity Day",    ConfigurationKeyEnum.BOOL_CHIEF_ORDER_PRODUCTIVITY_DAY,    RoutineCategory.CHIEF_ORDER),
+    CHIEF_ORDER_FESTIVITIES        (304, "Chief Order: Festivities",        ConfigurationKeyEnum.BOOL_CHIEF_ORDER_FESTIVITIES,         RoutineCategory.CHIEF_ORDER),
+    FC_CHIEF_ORDER_CRUNCH_TIME     (305, "FC Chief Order: Crunch Time",     ConfigurationKeyEnum.BOOL_FC_CHIEF_ORDER_CRUNCH_TIME,      RoutineCategory.CHIEF_ORDER),
+    FC_CHIEF_ORDER_RUSH_JOB        (306, "FC Chief Order: Rush Job",        ConfigurationKeyEnum.BOOL_FC_CHIEF_ORDER_RUSH_JOB,         RoutineCategory.CHIEF_ORDER),
+    FC_CHIEF_ORDER_DOUBLE_TIME     (307, "FC Chief Order: Double Time",     ConfigurationKeyEnum.BOOL_FC_CHIEF_ORDER_DOUBLE_TIME,      RoutineCategory.CHIEF_ORDER),
+    FC_CHIEF_ORDER_DAWN_ALLIANCE_COMMENDATION (308, "FC Chief Order: Dawn Alliance Commendation",
+            ConfigurationKeyEnum.BOOL_FC_CHIEF_ORDER_DAWN_ALLIANCE_COMMENDATION, RoutineCategory.CHIEF_ORDER),
 
     /* ── city ── */
 

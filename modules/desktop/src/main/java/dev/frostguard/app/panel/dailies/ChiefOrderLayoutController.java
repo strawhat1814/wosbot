@@ -9,11 +9,23 @@ import java.util.List;
 
 public class ChiefOrderLayoutController extends AbstractProfileController {
     @FXML
-    private CheckBox checkBoxRushJob;
-    @FXML
     private CheckBox checkBoxUrgentMobilisation;
     @FXML
+    private CheckBox checkBoxRushJob;
+    @FXML
+    private CheckBox checkBoxDoubleTime;
+    @FXML
     private CheckBox checkBoxProductivityDay;
+    @FXML
+    private CheckBox checkBoxFestivities;
+    @FXML
+    private CheckBox checkBoxFcCrunchTime;
+    @FXML
+    private CheckBox checkBoxFcRushJob;
+    @FXML
+    private CheckBox checkBoxFcDoubleTime;
+    @FXML
+    private CheckBox checkBoxFcDawnAllianceCommendation;
 
     @FXML
     private void initialize() { /* internal */
@@ -21,28 +33,19 @@ public class ChiefOrderLayoutController extends AbstractProfileController {
         initializeChangeEvents();
     }
 
-    public boolean isRushJobEnabled() { /* bind */
-        return isSelected(checkBoxRushJob);
-    }
-
-    public boolean isUrgentMobilisationEnabled() { /* bind */
-        return isSelected(checkBoxUrgentMobilisation);
-    }
-
-    public boolean isProductivityDayEnabled() { /* bind */
-        return isSelected(checkBoxProductivityDay);
-    }
-
     private List<OrderSwitch> chiefOrderSwitches() { /* internal */
         return List.of(
-            new OrderSwitch(checkBoxRushJob, ConfigurationKeyEnum.BOOL_CHIEF_ORDER_RUSH_JOB),
             new OrderSwitch(checkBoxUrgentMobilisation, ConfigurationKeyEnum.BOOL_CHIEF_ORDER_URGENT_MOBILISATION),
-            new OrderSwitch(checkBoxProductivityDay, ConfigurationKeyEnum.BOOL_CHIEF_ORDER_PRODUCTIVITY_DAY)
+            new OrderSwitch(checkBoxRushJob, ConfigurationKeyEnum.BOOL_CHIEF_ORDER_RUSH_JOB),
+            new OrderSwitch(checkBoxDoubleTime, ConfigurationKeyEnum.BOOL_CHIEF_ORDER_DOUBLE_TIME),
+            new OrderSwitch(checkBoxProductivityDay, ConfigurationKeyEnum.BOOL_CHIEF_ORDER_PRODUCTIVITY_DAY),
+            new OrderSwitch(checkBoxFestivities, ConfigurationKeyEnum.BOOL_CHIEF_ORDER_FESTIVITIES),
+            new OrderSwitch(checkBoxFcCrunchTime, ConfigurationKeyEnum.BOOL_FC_CHIEF_ORDER_CRUNCH_TIME),
+            new OrderSwitch(checkBoxFcRushJob, ConfigurationKeyEnum.BOOL_FC_CHIEF_ORDER_RUSH_JOB),
+            new OrderSwitch(checkBoxFcDoubleTime, ConfigurationKeyEnum.BOOL_FC_CHIEF_ORDER_DOUBLE_TIME),
+            new OrderSwitch(checkBoxFcDawnAllianceCommendation,
+                    ConfigurationKeyEnum.BOOL_FC_CHIEF_ORDER_DAWN_ALLIANCE_COMMENDATION)
         );
-    }
-
-    private boolean isSelected(CheckBox checkBox) { /* internal */
-        return checkBox != null && checkBox.isSelected();
     }
 
     private record OrderSwitch(CheckBox control, ConfigurationKeyEnum configKey) {

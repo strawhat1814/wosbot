@@ -11,33 +11,72 @@
                     vbarPolicy="AS_NEEDED" VBox.vgrow="ALWAYS">
             <content>
                 <VBox styleClass="task-page-root" maxHeight="Infinity"
-                      maxWidth="Infinity">
+                      maxWidth="Infinity" spacing="14">
                     <children>
 
-                        <!-- Chief Orders Card -->
+                        <!-- Chief Order (pre-Fire Crystal) -->
                         <VBox styleClass="content-card">
                             <children>
                                 <HBox alignment="CENTER_LEFT" maxWidth="Infinity"
                                       styleClass="header-yellow">
                                     <children>
-                                        <Label text="Chief Orders" />
+                                        <Label text="Chief Order" />
                                     </children>
                                 </HBox>
                                 <VBox styleClass="task-section-inner">
                                     <children>
                                         <Label styleClass="task-card-description"
-                                               text="Configure which chief orders to automatically complete" wrapText="true" />
+                                               text="Pre-Fire Crystal Chief House orders. Enable only the lineup your furnace still shows."
+                                               wrapText="true" />
 
                                         <Separator style="-fx-opacity: 0.25;" />
 
                                         <VBox styleClass="task-subsection" spacing="14">
                                             <children>
-                                                <CheckBox fx:id="checkBoxRushJob" mnemonicParsing="false"
-                                                          graphicTextGap="3.0" text="Rush Job (every 24h)" />
                                                 <CheckBox fx:id="checkBoxUrgentMobilisation" mnemonicParsing="false"
-                                                          graphicTextGap="3.0" text="Urgent Mobilisation (every 8h)" />
+                                                          graphicTextGap="3.0" text="Urgent Mobilization (every 8h)" />
+                                                <CheckBox fx:id="checkBoxRushJob" mnemonicParsing="false"
+                                                          graphicTextGap="3.0" text="Rush Job (every 23h)" />
+                                                <CheckBox fx:id="checkBoxDoubleTime" mnemonicParsing="false"
+                                                          graphicTextGap="3.0" text="Double Time (every 23h)" />
                                                 <CheckBox fx:id="checkBoxProductivityDay" mnemonicParsing="false"
                                                           graphicTextGap="3.0" text="Productivity Day (every 12h)" />
+                                                <CheckBox fx:id="checkBoxFestivities" mnemonicParsing="false"
+                                                          graphicTextGap="3.0" text="Festivities (every 24h)" />
+                                            </children>
+                                        </VBox>
+                                    </children>
+                                </VBox>
+                            </children>
+                        </VBox>
+
+                        <!-- FC Chief Order -->
+                        <VBox styleClass="content-card">
+                            <children>
+                                <HBox alignment="CENTER_LEFT" maxWidth="Infinity"
+                                      styleClass="header-yellow">
+                                    <children>
+                                        <Label text="FC Chief Order" />
+                                    </children>
+                                </HBox>
+                                <VBox styleClass="task-section-inner">
+                                    <children>
+                                        <Label styleClass="task-card-description"
+                                               text="Fire Crystal Age orders (Furnace FC1+). Rush Job and Double Time reuse the same templates as the classic lineup."
+                                               wrapText="true" />
+
+                                        <Separator style="-fx-opacity: 0.25;" />
+
+                                        <VBox styleClass="task-subsection" spacing="14">
+                                            <children>
+                                                <CheckBox fx:id="checkBoxFcCrunchTime" mnemonicParsing="false"
+                                                          graphicTextGap="3.0" text="Crunch Time (every 12h)" />
+                                                <CheckBox fx:id="checkBoxFcRushJob" mnemonicParsing="false"
+                                                          graphicTextGap="3.0" text="Rush Job (every 23h)" />
+                                                <CheckBox fx:id="checkBoxFcDoubleTime" mnemonicParsing="false"
+                                                          graphicTextGap="3.0" text="Double Time (every 23h)" />
+                                                <CheckBox fx:id="checkBoxFcDawnAllianceCommendation" mnemonicParsing="false"
+                                                          graphicTextGap="3.0" text="Dawn Alliance Commendation (every 47h)" />
                                             </children>
                                         </VBox>
                                     </children>

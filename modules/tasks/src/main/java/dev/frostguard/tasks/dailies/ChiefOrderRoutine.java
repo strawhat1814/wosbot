@@ -12,15 +12,22 @@ import dev.frostguard.engine.schedule.LaunchPoint;
 
 public class ChiefOrderRoutine extends DelayedTask {
 
-public enum ChiefOrderType {
-
-		RUSH_JOB("Rush Job", TemplatesEnum.CHIEF_ORDER_RUSH_JOB, 24),
-
+	public enum ChiefOrderType {
 
 		URGENT_MOBILIZATION("Urgent Mobilization", TemplatesEnum.CHIEF_ORDER_URGENT_MOBILISATION, 8),
 
+		RUSH_JOB("Rush Job", TemplatesEnum.CHIEF_ORDER_RUSH_JOB, 23),
 
-		PRODUCTIVITY_DAY("Productivity Day", TemplatesEnum.CHIEF_ORDER_PRODUCTIVITY_DAY, 12);
+		DOUBLE_TIME("Double Time", TemplatesEnum.CHIEF_ORDER_DOUBLE_TIME, 23),
+
+		PRODUCTIVITY_DAY("Productivity Day", TemplatesEnum.CHIEF_ORDER_PRODUCTIVITY_DAY, 12),
+
+		FESTIVITIES("Festivities", TemplatesEnum.CHIEF_ORDER_FESTIVITIES, 24),
+
+		CRUNCH_TIME("Crunch Time", TemplatesEnum.CHIEF_ORDER_CRUNCH_TIME, 12),
+
+		DAWN_ALLIANCE_COMMENDATION("Dawn Alliance Commendation",
+				TemplatesEnum.CHIEF_ORDER_DAWN_ALLIANCE_COMMENDATION, 47);
 
 		private final String description;
 		private final TemplatesEnum template;
@@ -45,21 +52,21 @@ public enum ChiefOrderType {
 		}
 	}
 
-private static final int ERROR_RETRY_MINUTES_VALUE = 10;
+	private static final int ERROR_RETRY_MINUTES_VALUE = 10;
 
-private final ChiefOrderType chiefOrderType;
+	private final ChiefOrderType chiefOrderType;
 
-public ChiefOrderRoutine(AccountDescriptor profile, TpDailyTaskEnum tpTask, ChiefOrderType chiefOrderType) {
+	public ChiefOrderRoutine(AccountDescriptor profile, TpDailyTaskEnum tpTask, ChiefOrderType chiefOrderType) {
 		super(profile, tpTask);
 		this.chiefOrderType = chiefOrderType;
 	}
 
-@Override
+	@Override
 	public LaunchPoint getRequiredStartLocation() {
 		return LaunchPoint.HOME;
 	}
 
-@Override
+	@Override
 	protected void execute() {
 		logInfo(routineLogChiefOrderLine("Initiating Chief Order : " + chiefOrderType.getDescription() +
 				" (Cooldown: " + chiefOrderType.getCooldownHours() + " hours)"));
@@ -82,11 +89,11 @@ public ChiefOrderRoutine(AccountDescriptor profile, TpDailyTaskEnum tpTask, Chie
 		queueNextRun();
 	}
 
-private String routineLogChiefOrderLine(String note) {
-        return "ChiefOrderRoutine | " + note;
-    }
+	private String routineLogChiefOrderLine(String note) {
+		return "ChiefOrderRoutine | " + note;
+	}
 
-private boolean openUpChiefOrderMenu() {
+	private boolean openUpChiefOrderMenu() {
 		logInfo(routineLogChiefOrderLine("Looking for Chief Order menu access button"));
 
 		ImageSearchResultData menuButton = templateSearchHelper.locatePattern(
@@ -102,11 +109,10 @@ private boolean openUpChiefOrderMenu() {
 		tapInside(menuButton);
 		sleepTask(2000);
 
-
 		return true;
 	}
 
-private void manageTaskFailure(String reason) {
+	private void manageTaskFailure(String reason) {
 		logWarning(routineLogChiefOrderLine("Routine pass did not complete: " + reason));
 
 		LocalDateTime retryTime = LocalDateTime.now().plusMinutes(ERROR_RETRY_MINUTES_VALUE);
@@ -115,9 +121,8 @@ private void manageTaskFailure(String reason) {
 		logInfo(routineLogChiefOrderLine("Task rescheduled to retry in " + ERROR_RETRY_MINUTES_VALUE + " minutes"));
 	}
 
-private boolean chooseOrderType() {
+	private boolean chooseOrderType() {
 		sleepTask(1500);
-
 
 		logInfo(routineLogChiefOrderLine("Scanning for Chief Order type: " + chiefOrderType.getDescription()));
 
@@ -135,13 +140,11 @@ private boolean chooseOrderType() {
 		tapInside(orderButton);
 		sleepTask(1500);
 
-
 		return true;
 	}
 
-private boolean enactOrderFlow() {
+	private boolean enactOrderFlow() {
 		sleepTask(1500);
-
 
 		logInfo(routineLogChiefOrderLine("Scanning for Chief Order Enact button"));
 
@@ -158,16 +161,14 @@ private boolean enactOrderFlow() {
 		tapInside(enactButton);
 		sleepTask(1000);
 
-
 		pressBack();
 		sleepTask(5000);
-
 
 		logInfo(routineLogChiefOrderLine(chiefOrderType.getDescription() + " activated finished cleanly"));
 		return true;
 	}
 
-private void queueNextRun() {
+	private void queueNextRun() {
 		LocalDateTime nextExecutionTime = LocalDateTime.now()
 				.plusHours(chiefOrderType.getCooldownHours());
 
