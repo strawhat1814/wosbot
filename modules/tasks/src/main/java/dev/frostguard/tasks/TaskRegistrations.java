@@ -68,8 +68,6 @@ public class TaskRegistrations {
                     ChiefOrderRoutine.ChiefOrderType.URGENT_MOBILIZATION);
             case CHIEF_ORDER_RUSH_JOB, FC_CHIEF_ORDER_RUSH_JOB -> new ChiefOrderRoutine(profile, type,
                     ChiefOrderRoutine.ChiefOrderType.RUSH_JOB);
-            case CHIEF_ORDER_DOUBLE_TIME, FC_CHIEF_ORDER_DOUBLE_TIME -> new ChiefOrderRoutine(profile, type,
-                    ChiefOrderRoutine.ChiefOrderType.DOUBLE_TIME);
             case CHIEF_ORDER_PRODUCTIVITY_DAY -> new ChiefOrderRoutine(profile, type,
                     ChiefOrderRoutine.ChiefOrderType.PRODUCTIVITY_DAY);
             case CHIEF_ORDER_FESTIVITIES -> new ChiefOrderRoutine(profile, type,

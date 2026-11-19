@@ -37,8 +37,6 @@
                                                           graphicTextGap="3.0" text="Urgent Mobilization (every 8h)" />
                                                 <CheckBox fx:id="checkBoxRushJob" mnemonicParsing="false"
                                                           graphicTextGap="3.0" text="Rush Job (every 23h)" />
-                                                <CheckBox fx:id="checkBoxDoubleTime" mnemonicParsing="false"
-                                                          graphicTextGap="3.0" text="Double Time (every 23h)" />
                                                 <CheckBox fx:id="checkBoxProductivityDay" mnemonicParsing="false"
                                                           graphicTextGap="3.0" text="Productivity Day (every 12h)" />
                                                 <CheckBox fx:id="checkBoxFestivities" mnemonicParsing="false"
@@ -62,7 +60,7 @@
                                 <VBox styleClass="task-section-inner">
                                     <children>
                                         <Label styleClass="task-card-description"
-                                               text="Fire Crystal Age orders (Furnace FC1+). Rush Job and Double Time reuse the same templates as the classic lineup."
+                                               text="Fire Crystal Age orders (Furnace FC1+). Rush Job reuses the classic template."
                                                wrapText="true" />
 
                                         <Separator style="-fx-opacity: 0.25;" />
@@ -73,8 +71,6 @@
                                                           graphicTextGap="3.0" text="Crunch Time (every 12h)" />
                                                 <CheckBox fx:id="checkBoxFcRushJob" mnemonicParsing="false"
                                                           graphicTextGap="3.0" text="Rush Job (every 23h)" />
-                                                <CheckBox fx:id="checkBoxFcDoubleTime" mnemonicParsing="false"
-                                                          graphicTextGap="3.0" text="Double Time (every 23h)" />
                                                 <CheckBox fx:id="checkBoxFcDawnAllianceCommendation" mnemonicParsing="false"
                                                           graphicTextGap="3.0" text="Dawn Alliance Commendation (every 47h)" />
                                             </children>

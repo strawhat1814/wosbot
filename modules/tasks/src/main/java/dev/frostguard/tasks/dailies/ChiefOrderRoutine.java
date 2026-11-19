@@ -18,8 +18,6 @@ public class ChiefOrderRoutine extends DelayedTask {
 
 		RUSH_JOB("Rush Job", TemplatesEnum.CHIEF_ORDER_RUSH_JOB, 23),
 
-		DOUBLE_TIME("Double Time", TemplatesEnum.CHIEF_ORDER_DOUBLE_TIME, 23),
-
 		PRODUCTIVITY_DAY("Productivity Day", TemplatesEnum.CHIEF_ORDER_PRODUCTIVITY_DAY, 12),
 
 		FESTIVITIES("Festivities", TemplatesEnum.CHIEF_ORDER_FESTIVITIES, 24),
