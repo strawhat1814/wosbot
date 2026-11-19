@@ -537,7 +537,7 @@ public class DebuggingLayoutController {
                     String lowerCaseFilter = newValue.toLowerCase();
                     List<File> filteredList = new ArrayList<>();
                     for (File file : allTemplates) {
-                        if (file.getName().toLowerCase().contains(lowerCaseFilter)) {
+                        if (templateRelativePath(file).toLowerCase().contains(lowerCaseFilter)) {
                             filteredList.add(file);
                         }
                     }
@@ -677,30 +677,29 @@ public class DebuggingLayoutController {
     }
 
     private void loadTemplates() {
-        List<File> possibleTemplateDirs = new ArrayList<>();
-        possibleTemplateDirs.add(new File("modules/vision/src/main/resources/templates"));
-        possibleTemplateDirs.add(new File("../modules/vision/src/main/resources/templates"));
-        possibleTemplateDirs.add(new File("../../modules/vision/src/main/resources/templates"));
-        possibleTemplateDirs.add(new File("templates"));
+        List<File> sourceCandidates = new ArrayList<>();
+        List<File> fallbackCandidates = new ArrayList<>();
+        sourceCandidates.add(new File("modules/vision/src/main/resources/templates"));
+        sourceCandidates.add(new File("../modules/vision/src/main/resources/templates"));
+        sourceCandidates.add(new File("../../modules/vision/src/main/resources/templates"));
+        fallbackCandidates.add(new File("templates"));
 
         File currentDir = new File(System.getProperty("user.dir")).getAbsoluteFile();
         while (currentDir != null && currentDir.exists()) {
-            possibleTemplateDirs.add(new File(currentDir, "modules/vision/src/main/resources/templates"));
+            sourceCandidates.add(new File(currentDir, "modules/vision/src/main/resources/templates"));
             currentDir = currentDir.getParentFile();
         }
 
-        templateRootDir = null;
-        for (File dir : possibleTemplateDirs) {
-            if (dir.exists() && dir.isDirectory()) {
-                templateRootDir = dir;
-                break;
-            }
+        templateRootDir = firstExistingDirectory(sourceCandidates);
+        if (templateRootDir == null) {
+            templateRootDir = firstExistingDirectory(fallbackCandidates);
         }
 
         allTemplates.clear();
         if (templateRootDir != null) {
             findImageFiles(templateRootDir, allTemplates);
-            log("Found " + allTemplates.size() + " templates.");
+            allTemplates.sort(Comparator.comparing(this::templateRelativePath, String.CASE_INSENSITIVE_ORDER));
+            log("Found " + allTemplates.size() + " templates in " + templateRootDir.getAbsolutePath());
             refreshTemplateFolderCombo();
         } else {
             log("Template directory not found. Please verify location.");
@@ -718,7 +717,7 @@ public class DebuggingLayoutController {
                     setText(null);
                     setGraphic(null);
                 } else {
-                    setText(file.getName());
+                    setText(templateRelativePath(file));
                     try {
                         Image icon = new Image(new FileInputStream(file), 32, 32, true, true);
                         imageView.setImage(icon);
@@ -729,6 +728,29 @@ public class DebuggingLayoutController {
                 }
             }
         });
+    }
+
+    private static File firstExistingDirectory(List<File> candidates) {
+        for (File dir : candidates) {
+            if (dir != null && dir.exists() && dir.isDirectory()) {
+                return dir;
+            }
+        }
+        return null;
+    }
+
+    private String templateRelativePath(File file) {
+        if (file == null) {
+            return "";
+        }
+        if (templateRootDir == null) {
+            return file.getName();
+        }
+        try {
+            return templateRootDir.toPath().relativize(file.toPath()).toString().replace('\\', '/');
+        } catch (IllegalArgumentException ex) {
+            return file.getName();
+        }
     }
 
     private void refreshTemplateFolderCombo() {

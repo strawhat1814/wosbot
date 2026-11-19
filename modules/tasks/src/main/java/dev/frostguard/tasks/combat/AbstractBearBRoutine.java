@@ -1,4 +1,4 @@
-package dev.frostguard.tasks.combat;
+﻿package dev.frostguard.tasks.combat;
 
 import static dev.frostguard.api.configs.ConfigurationKeyEnum.BEAR_TRAP_ACTIVE_PETS_BOOL;
 import static dev.frostguard.api.configs.ConfigurationKeyEnum.BEAR_TRAP_CALL_RALLY_BOOL;
@@ -229,7 +229,7 @@ abstract class AbstractBearBRoutine extends DelayedTask {
         LocalDateTime nextWindowStartUtc = LocalDateTime.ofInstant(
                 result.getNextWindowStart(), ZoneOffset.UTC);
         logInfo(logLine("Planning next Bear B for (UTC): " + nextWindowStartUtc.format(DISPLAY)));
-        reschedule(nextWindowStart);
+        rescheduleExact(nextWindowStart);
         LocalDateTime nextActivation = nextWindowStartUtc.plusMinutes(trapPreparationTime);
         ConfigService.obtain().writeAccountSetting(
                 profile,

@@ -463,7 +463,7 @@ private boolean validateAttemptsRemainingFlow(AttemptStatusShape attemptStatus) 
                 LocalDateTime nextReset = GameTimeUtils.dailyResetTime();
                 logInfo(routineLogAllianceMobilizationLine("Zero attempts remaining. Planning next run for next UTC reset at "
                         + nextReset.format(DATETIME_FORMATTER) + "."));
-                reschedule(nextReset);
+                rescheduleExact(nextReset);
                 return false;
             }
         } else {

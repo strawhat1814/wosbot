@@ -38,7 +38,7 @@ public class MyriadBazaarEventRoutine extends DelayedTask {
 
         if (!bazaarIcon.isFound()) {
             logInfo("Myriad Bazaar event probably not active");
-            reschedule(GameTimeUtils.dailyResetTime());
+            rescheduleExact(GameTimeUtils.dailyResetTime());
             return;
         }
         logInfo("Myriad Bazaar is active, claiming free rewards");
@@ -82,7 +82,7 @@ public class MyriadBazaarEventRoutine extends DelayedTask {
                             .withCoordinates(topLeft, bottomRight)
                             .build());
         }
-        reschedule(GameTimeUtils.dailyResetTime());
+        rescheduleExact(GameTimeUtils.dailyResetTime());
 
     }
 

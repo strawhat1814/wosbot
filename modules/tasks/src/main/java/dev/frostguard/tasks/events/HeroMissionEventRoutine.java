@@ -153,7 +153,7 @@ public class HeroMissionEventRoutine extends DelayedTask {
         claimAllRewards();
         if (progress == HeroMissionProgressBar.State.COMPLETE) {
             logInfo("Hero's Mission progress bar reaches the final reward; rescheduling for next reset.");
-            reschedule(GameTimeUtils.dailyResetTime());
+            rescheduleExact(GameTimeUtils.dailyResetTime());
             return;
         }
 

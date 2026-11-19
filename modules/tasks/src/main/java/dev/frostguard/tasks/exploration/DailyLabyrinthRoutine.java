@@ -60,7 +60,7 @@ public class DailyLabyrinthRoutine extends DelayedTask {
             // The Daily sidebar opens the currently active Land of Heroes dungeon directly.
             executeCurrentChallenge();
 
-            reschedule(GameTimeUtils.dailyResetTime());
+            rescheduleExact(GameTimeUtils.dailyResetTime());
 
         } catch (Exception e) {
             logError("An error occurred during the Labyrinth task: " + e.getMessage());

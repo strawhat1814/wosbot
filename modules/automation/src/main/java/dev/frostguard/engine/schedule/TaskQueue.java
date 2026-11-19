@@ -221,7 +221,7 @@ public class TaskQueue {
             if (isExecutingTask(kind)) {
                 return false;
             }
-            ref.reschedule(nextRun);
+            ref.rescheduleExact(nextRun);
             ref.setRecurring(true);
             taskBacklog.offer(ref);
             emitInfoTask(ref, "Enqueued with aligned schedule " + nextRun.format(TS_FMT));
@@ -230,7 +230,7 @@ public class TaskQueue {
 
         taskBacklog.remove(existing);
         existing.setProfile(updatedProfile);
-        existing.reschedule(nextRun);
+        existing.rescheduleExact(nextRun);
         taskBacklog.offer(existing);
         emitInfoTask(existing, "Schedule realigned to " + nextRun.format(TS_FMT));
         return true;
@@ -281,7 +281,7 @@ public class TaskQueue {
 
             LocalDateTime previousWakeAt = task.getScheduled();
             taskBacklog.remove(task);
-            task.reschedule(revisedWakeAt);
+            task.rescheduleExact(revisedWakeAt);
             taskBacklog.offer(task);
             recordScheduleAdjustment(task);
             emitInfoTask(task, String.format(

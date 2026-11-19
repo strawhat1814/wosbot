@@ -264,7 +264,7 @@ public class PetSkillsRoutine extends DelayedTask {
      */
     private void handleNoSkillsEnabled() {
         logInfo("No pet skills enabled. Rescheduling to retry at reset.");
-        reschedule(GameTimeUtils.dailyResetTime());
+        rescheduleExact(GameTimeUtils.dailyResetTime());
     }
 
     /**
@@ -273,7 +273,7 @@ public class PetSkillsRoutine extends DelayedTask {
      */
     private void handleMenuOpenFailure() {
         logWarning("Pets feature is unavailable on the confirmed Home screen. Retrying after game reset.");
-        reschedule(GameTimeUtils.dailyResetTime());
+        rescheduleExact(GameTimeUtils.dailyResetTime());
     }
 
     /**

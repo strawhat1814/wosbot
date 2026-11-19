@@ -200,7 +200,7 @@ public class PetAllianceTreasuresRoutine extends DelayedTask {
 	 */
 	private void rescheduleToGameReset(String reason) {
 		LocalDateTime nextReset = GameTimeUtils.dailyResetTime();
-		reschedule(nextReset);
+		rescheduleExact(nextReset);
 		logInfo(reason + ". Rescheduling to next game reset: " +
 				nextReset.format(DATETIME_FORMATTER));
 	}

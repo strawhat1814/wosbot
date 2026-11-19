@@ -221,7 +221,7 @@ public class TundraTruckEventRoutine extends DelayedTask {
 		} catch (DateTimeParseException e) {
 			logError("Failed to parse activation time '" + activationTime + "': " + e.getMessage());
 			// Fallback to game reset
-			reschedule(GameTimeUtils.dailyResetTime());
+			rescheduleExact(GameTimeUtils.dailyResetTime());
 		}
 		return true;
 	}
@@ -333,7 +333,7 @@ public class TundraTruckEventRoutine extends DelayedTask {
 
 		if (endedResult.isFound()) {
 			logInfo("Tundra Truck event has ended. Rescheduling for next reset.");
-			reschedule(GameTimeUtils.dailyResetTime());
+			rescheduleExact(GameTimeUtils.dailyResetTime());
 			return true;
 		}
 

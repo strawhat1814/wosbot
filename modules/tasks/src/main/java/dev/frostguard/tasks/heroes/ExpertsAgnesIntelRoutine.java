@@ -221,7 +221,7 @@ public class ExpertsAgnesIntelRoutine extends DelayedTask {
      */
     private void rescheduleToGameReset() {
         LocalDateTime nextReset = GameTimeUtils.dailyResetTime();
-        reschedule(nextReset);
+        rescheduleExact(nextReset);
         logInfo("Rescheduled to next game reset: " +
                 nextReset.format(DATETIME_FORMATTER));
     }

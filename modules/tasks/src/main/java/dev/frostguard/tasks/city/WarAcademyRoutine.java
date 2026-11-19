@@ -80,7 +80,7 @@ public class WarAcademyRoutine extends DelayedTask {
         }
         if (scan.candidate() == null) {
             logInfo(routineLogWarAcademyLine("No shard Redeem row with Remaining 1-20."));
-            reschedule(GameTimeUtils.dailyResetTime());
+            rescheduleExact(GameTimeUtils.dailyResetTime());
             return;
         }
         ShardRedeemCandidate shardRow = scan.candidate();
@@ -118,7 +118,7 @@ public class WarAcademyRoutine extends DelayedTask {
         }
         if (leftover.candidate() == null) {
             logInfo(routineLogWarAcademyLine("No remaining shard Redeem row. Planning next run for game reset."));
-            reschedule(GameTimeUtils.dailyResetTime());
+            rescheduleExact(GameTimeUtils.dailyResetTime());
         } else {
             logInfo(routineLogWarAcademyLine(String.format(
                     "Additional shards detected: %d. Planning next run in %d hours.",

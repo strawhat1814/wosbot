@@ -429,7 +429,7 @@ public class MercenaryEventRoutine extends DelayedTask {
         String snapshot = TaskDiagnosticSnapshots.capture(
                 emuManager, EMULATOR_NUMBER, "mercenaryevent", "final-level-rest");
         logInfo(reason + " Next visit at " + stamp(next) + "; " + snapshot + ".");
-        reschedule(next);
+        rescheduleExact(next);
         return true;
     }
 
@@ -582,7 +582,7 @@ public class MercenaryEventRoutine extends DelayedTask {
                 screen, LocalDateTime.now(), GameTimeUtils.dailyResetTime(), null);
         if (screen == EventPeriodVisit.OpenedScreen.COMPLETED) {
             logInfo("Mercenary hunt completed. Next visit at " + stamp(next) + ".");
-            reschedule(next);
+            rescheduleExact(next);
             return;
         }
 
@@ -593,7 +593,7 @@ public class MercenaryEventRoutine extends DelayedTask {
                 EventPeriodTemplates.MERCENARY_COMPLETION,
                 () -> diagnosticSnapshot("completion-template"));
         logWarning(missing.isEmpty() ? line + "." : line + "; " + missing + ".");
-        reschedule(next);
+        rescheduleExact(next);
     }
 
     private void noteEndCountdown(boolean completionConfirmed) {

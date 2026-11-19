@@ -571,6 +571,6 @@ private void deferNextWindow() {
         logInfo(routineLogAllianceChampionshipLine("Planning next run Alliance Championship for (UTC): " + nextExecutionUtc));
         logInfo(routineLogAllianceChampionshipLine("Planning next run Alliance Championship for (Local): " + nextExecutionLocal));
 
-        reschedule(nextExecutionLocal);
+        rescheduleExact(nextExecutionLocal);
     }
 }

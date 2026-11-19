@@ -236,7 +236,7 @@ public class TaskManagerActionController implements TaskStatusChangeListener {
 			return;
 		}
 
-		delayedTask.reschedule(scheduledTime);
+		delayedTask.rescheduleExact(scheduledTime);
 		delayedTask.setRecurring(recurring);
 		queue.enqueue(delayedTask);
 

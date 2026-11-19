@@ -58,6 +58,18 @@
                 </VBox>
 
                 <VBox styleClass="content-card" VBox.vgrow="NEVER">
+                    <HBox alignment="CENTER_LEFT" maxWidth="Infinity" styleClass="header-yellow">
+                        <children><Label text="Schedule jitter" /></children>
+                    </HBox>
+                    <VBox spacing="12" styleClass="content-card-inner">
+                        <Label text="Relative task delays longer than 10 minutes get add-only jitter of up to 10% (capped at 2 hours). Example: 60m → 60–66m, 24h → 24–26h. Wall-clock targets (Bear windows, UTC resets, restored schedules) stay exact."
+                               styleClass="description-label"
+                               wrapText="true"
+                               style="-fx-text-fill: #8b949e; -fx-font-size: 11;" />
+                    </VBox>
+                </VBox>
+
+                <VBox styleClass="content-card" VBox.vgrow="NEVER">
                     <HBox alignment="CENTER_LEFT" maxWidth="Infinity" styleClass="header-teal">
                         <children><Label text="Tap coord and time jitter" /></children>
                     </HBox>

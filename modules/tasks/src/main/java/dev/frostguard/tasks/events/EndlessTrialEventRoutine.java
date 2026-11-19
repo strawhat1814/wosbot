@@ -85,7 +85,7 @@ public class EndlessTrialEventRoutine extends DelayedTask {
             if (claimed > 0) {
                 logInfo("Claimed Endless Trial daily challenges (claim taps=" + claimed + ").");
             }
-            reschedule(GameTimeUtils.dailyResetTime());
+            rescheduleExact(GameTimeUtils.dailyResetTime());
             return;
         }
 
@@ -155,7 +155,7 @@ public class EndlessTrialEventRoutine extends DelayedTask {
         }
         if (alreadyDone + attacksLanded >= MAX_DAILY_ATTACKS) {
             logInfo("Endless Trial daily attacks finished. Rescheduling for daily reset.");
-            reschedule(GameTimeUtils.dailyResetTime());
+            rescheduleExact(GameTimeUtils.dailyResetTime());
             return;
         }
 

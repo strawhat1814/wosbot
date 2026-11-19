@@ -589,7 +589,7 @@ public class ScheduleService {
 		}
 		if (bearPlan.isPresent()) {
 			BearTrapParticipationSchedule.Plan plan = bearPlan.get();
-			task.reschedule(plan.nextRun());
+			task.rescheduleExact(plan.nextRun());
 			if (saved != null) {
 				task.setLastExecutionTime(saved.getLastExecution());
 				state.setLastExecutionTime(saved.getLastExecution());
@@ -603,7 +603,7 @@ public class ScheduleService {
 			scheduleFreshTask(task, account);
 			state.setNextExecutionTime(task.getScheduled());
 		} else {
-			task.reschedule(saved.getNextSchedule());
+			task.rescheduleExact(saved.getNextSchedule());
 			task.setLastExecutionTime(saved.getLastExecution());
 			if (saved.hasStaminaDeferral()) {
 				task.restoreStaminaDeferral(new StaminaDeferral(
@@ -637,7 +637,7 @@ public class ScheduleService {
 			return;
 		}
 		DailyTaskStatusData saved = progressByType.get(task.getTpDailyTaskId());
-		task.reschedule(plan.nextRun());
+		task.rescheduleExact(plan.nextRun());
 		if (saved != null) {
 			task.setLastExecutionTime(saved.getLastExecution());
 		}
@@ -715,7 +715,7 @@ public class ScheduleService {
 			task.setLastExecutionTime(persistedStatus.getLastExecution());
 			LocalDateTime nextSchedule = persistedStatus.getNextSchedule();
 			if (nextSchedule != null) {
-				task.reschedule(nextSchedule);
+				task.rescheduleExact(nextSchedule);
 				return true;
 			}
 			if (persistedStatus.getLastExecution() != null) {

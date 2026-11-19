@@ -263,7 +263,7 @@ public abstract class DelayedTask implements Runnable, Delayed, StaminaWaitSched
         }
 
         LocalDateTime retryAt = LocalDateTime.ofInstant(decision.releaseAt(), ZoneId.systemDefault());
-        reschedule(retryAt);
+        rescheduleExact(retryAt);
         String reason = decision.reason() == BearTrapProtectionPolicy.BlockReason.ALL_TASKS
                 ? "all scheduled tasks are paused"
                 : "this task can start a rally";
@@ -487,7 +487,19 @@ public abstract class DelayedTask implements Runnable, Delayed, StaminaWaitSched
 
     // ── scheduling ──────────────────────────────────────────────────
 
+    /**
+     * Soft reschedule: relative delays longer than 10 minutes get global
+     * add-only jitter (10%, capped at 2h). Use
+     * {@link #rescheduleExact(LocalDateTime)} for wall-clock event starts,
+     * restored schedules, and other absolute targets.
+     */
     public void reschedule(LocalDateTime rescheduledTime) {
+        LocalDateTime requested = Objects.requireNonNull(rescheduledTime);
+        scheduledTime = ScheduleJitterPolicy.applySoft(LocalDateTime.now(), requested);
+    }
+
+    /** Wall-clock / restored schedule — no soft jitter. */
+    public void rescheduleExact(LocalDateTime rescheduledTime) {
         scheduledTime = Objects.requireNonNull(rescheduledTime);
     }
 
@@ -502,7 +514,7 @@ public abstract class DelayedTask implements Runnable, Delayed, StaminaWaitSched
             LocalDateTime retryAt,
             LocalDateTime earliestRunnableAt) {
         staminaDeferral = new StaminaDeferral(minimumRequired, regenerationTarget, earliestRunnableAt);
-        reschedule(retryAt);
+        rescheduleExact(retryAt);
     }
 
     public StaminaDeferral getStaminaDeferral() {

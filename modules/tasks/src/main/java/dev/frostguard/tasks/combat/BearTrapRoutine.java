@@ -970,7 +970,7 @@ private void deferToNextWindow() {
         logInfo(routineLogBearTrapLine("Planning next run Bear Trap for (UTC): " + nextWindowStartUtc.format(DATETIME_FORMATTER)));
         logInfo(routineLogBearTrapLine("Planning next run Bear Trap for (Local): " + nextWindowStart.format(DATETIME_FORMATTER)));
 
-        reschedule(nextWindowStart);
+        rescheduleExact(nextWindowStart);
         refreshNextWindowDateTime();
     }
 

@@ -179,7 +179,7 @@ private record RallyLaunchResult(RallyLaunchOutcome outcome, String detail) {
                 if (rewards.action() == PolarSpecialRewardsBudget.Action.STOP_FOR_DAY) {
                     logInfo(routineLogPolarTerrorHuntingLine(
                             "Special rewards were confirmed at zero. Planning next run after daily reset."));
-                    reschedule(GameTimeUtils.dailyResetTime().plusMinutes(30));
+                    rescheduleExact(GameTimeUtils.dailyResetTime().plusMinutes(30));
                     return;
                 }
                 if (rewards.action() == PolarSpecialRewardsBudget.Action.WAIT) {
@@ -261,7 +261,7 @@ private record RallyLaunchResult(RallyLaunchOutcome outcome, String detail) {
             if (result.outcome() == RallyLaunchOutcome.NO_SPECIAL_REWARDS) {
                 logInfo(routineLogPolarTerrorHuntingLine(
                         "Zero special rewards left. Planning next run after daily reset."));
-                reschedule(GameTimeUtils.dailyResetTime().plusMinutes(30));
+                rescheduleExact(GameTimeUtils.dailyResetTime().plusMinutes(30));
                 return;
             }
 

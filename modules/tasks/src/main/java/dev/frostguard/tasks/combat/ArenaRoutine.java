@@ -246,7 +246,7 @@ public class ArenaRoutine extends DelayedTask {
         if (!isValidTimeFormat(activationTime)) {
             logWarning("Invalid activation time format: " + activationTime +
                     ". Scheduling to 5 min before reset.");
-            reschedule(GameTimeUtils.dailyResetTime().minusMinutes(5));
+            rescheduleExact(GameTimeUtils.dailyResetTime().minusMinutes(5));
             return;
         }
 
@@ -1324,7 +1324,7 @@ public class ArenaRoutine extends DelayedTask {
     private void rescheduleWithActivationHour() {
         if (!isValidTimeFormat(activationTime)) {
             logInfo("Rescheduling Arena task for 5 min before game reset time (invalid activation time)");
-            reschedule(GameTimeUtils.dailyResetTime().minusMinutes(5));
+            rescheduleExact(GameTimeUtils.dailyResetTime().minusMinutes(5));
             return;
         }
 
@@ -1351,14 +1351,14 @@ public class ArenaRoutine extends DelayedTask {
         } catch (Exception e) {
             logError("Failed to reschedule with activation time: " + e.getMessage());
             logInfo("Falling back to 5 min before game reset time");
-            reschedule(GameTimeUtils.dailyResetTime().minusMinutes(5));
+            rescheduleExact(GameTimeUtils.dailyResetTime().minusMinutes(5));
         }
     }
 
     private void rescheduleForToday() {
         if (!isValidTimeFormat(activationTime)) {
             logInfo("Rescheduling Arena task for 5 min before game reset time (invalid activation time)");
-            reschedule(GameTimeUtils.dailyResetTime().minusMinutes(5));
+            rescheduleExact(GameTimeUtils.dailyResetTime().minusMinutes(5));
             return;
         }
 
@@ -1384,7 +1384,7 @@ public class ArenaRoutine extends DelayedTask {
         } catch (Exception e) {
             logError("Failed to reschedule for today's activation time: " + e.getMessage());
             logInfo("Falling back to 5 min before game reset time");
-            reschedule(GameTimeUtils.dailyResetTime().minusMinutes(5));
+            rescheduleExact(GameTimeUtils.dailyResetTime().minusMinutes(5));
         }
     }
 

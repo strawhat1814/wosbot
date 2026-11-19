@@ -57,7 +57,7 @@ public class LifeEssenceCaringRoutine extends DelayedTask {
 			// Check if daily attempts are available
 			if (!checkDailyAttemptsAvailable()) {
 				closeAllMenus();
-				reschedule(GameTimeUtils.dailyResetTime());
+				rescheduleExact(GameTimeUtils.dailyResetTime());
 				return;
 			}
 
@@ -68,7 +68,7 @@ public class LifeEssenceCaringRoutine extends DelayedTask {
 				if (islandsCared >= 3) {
 					logInfo("Life Essence caring completed successfully for all islands today. Rescheduling for next game reset.");
 					closeAllMenus();
-					reschedule(GameTimeUtils.dailyResetTime());
+					rescheduleExact(GameTimeUtils.dailyResetTime());
 					return;
 				}
 			}

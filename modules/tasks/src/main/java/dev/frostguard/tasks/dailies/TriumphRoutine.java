@@ -47,7 +47,7 @@ public TriumphRoutine(AccountDescriptor profile, TpDailyTaskEnum dailyMission) {
 
 			if (result.isFound()) {
 				logInfo(routineLogTriumphLine("Daily Triumph rewards already collected - planning next run for next game reset"));
-				this.reschedule(GameTimeUtils.dailyResetTime());
+				this.rescheduleExact(GameTimeUtils.dailyResetTime());
 			} else {
 
 
@@ -61,7 +61,7 @@ public TriumphRoutine(AccountDescriptor profile, TpDailyTaskEnum dailyMission) {
 					sleepTask(1000);
 
 					logInfo(routineLogTriumphLine("Daily rewards collected finished cleanly"));
-					reschedule(GameTimeUtils.dailyResetTime());
+					rescheduleExact(GameTimeUtils.dailyResetTime());
 				} else {
 
 

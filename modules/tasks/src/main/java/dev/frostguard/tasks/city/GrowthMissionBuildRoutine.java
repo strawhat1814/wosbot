@@ -228,7 +228,7 @@ extends DelayedTask {
             this.logInfo(this.logLine("All Growth missions complete \u2014 rescheduling for daily reset."));
             this.notifyTelegram("All Growth missions complete");
             this.dismissToHome();
-            this.reschedule(GameTimeUtils.dailyResetTime());
+            this.rescheduleExact(GameTimeUtils.dailyResetTime());
             return;
         }
         if (openResult == OpenGrowthResult.NO_MAIN_ACTION) {

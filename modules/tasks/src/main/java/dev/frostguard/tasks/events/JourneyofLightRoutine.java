@@ -52,7 +52,7 @@ public class JourneyofLightRoutine extends DelayedTask {
         consecutiveNavigationFailures = 0;
         if (eventStatus == JourneyOfLightEventStatus.ENDED) {
             logInfo("Journey of Light event has ended. Rescheduling to next reset.");
-            reschedule(GameTimeUtils.dailyResetTime());
+            rescheduleExact(GameTimeUtils.dailyResetTime());
             return;
         }
 
