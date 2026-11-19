@@ -1,4 +1,4 @@
-﻿package dev.frostguard.tasks.combat;
+package dev.frostguard.tasks.combat;
 
 import static dev.frostguard.api.configs.ConfigurationKeyEnum.BEAR_TRAP_ACTIVE_PETS_BOOL;
 import static dev.frostguard.api.configs.ConfigurationKeyEnum.BEAR_TRAP_CALL_RALLY_BOOL;
@@ -426,8 +426,12 @@ abstract class AbstractBearBRoutine extends DelayedTask {
         sleepTask(300);
 
         if (!marchHelper.selectFlag(selectedFlag)) {
-            logWarning(logLine("Configured join formation #" + selectedFlag + " unavailable; cancelling"));
+            // Leave the formation sheet only; Solo→Rally will try the next list row.
+            // Do not treat this as end-of-visit — often means no usable slot/row yet.
+            logWarning(logLine("Configured join formation #" + selectedFlag
+                    + " unavailable; dismissing sheet and continuing Solo→Rally"));
             pressBack();
+            sleepTask(300);
             return false;
         }
         if (deploymentHelper.hasNoDeployableTroops()) {
@@ -714,10 +718,11 @@ abstract class AbstractBearBRoutine extends DelayedTask {
         return profile.getConfig(key, LocalDateTime.class);
     }
 
-    protected void openWarAndJoin(int freeMarches) {
-        if (freeMarches <= 0) {
-            return;
-        }
+    /**
+     * Stay on Alliance War: join when +, else Solo→Rally refresh, until Own is due
+     * or the trap window ends. Free-march OCR is not used to leave early.
+     */
+    protected void openWarAndJoinUntilOwnOrWindowEnd() {
         ImageSearchResultData warButton = templateSearchHelper.locatePattern(
                 GAME_HOME_WAR,
                 SearchConfig.builder().withThreshold(90).withMaxAttempts(TEMPLATE_RETRIES).build());
@@ -725,29 +730,31 @@ abstract class AbstractBearBRoutine extends DelayedTask {
             logWarning(logLine("War button not found; skipping join pass"));
             return;
         }
-        logInfo(logLine("Entering war section to check for rallies"));
+        logInfo(logLine("Entering war section; Solo→Rally until Own or window end"));
         tapInside(warButton);
         sleepTask(800);
-        // Order: War → join → Solo→Rally → join → Solo→Rally → … (leave/return refreshes top row)
-        int joinsWanted = freeMarches;
-        int joinsSucceeded = 0;
-        int maxAttempts = Math.max(joinsWanted * 3, joinsWanted);
-        for (int attempt = 1; attempt <= maxAttempts && joinsSucceeded < joinsWanted; attempt++) {
-            Boolean outcome = attemptJoinOneRally();
-            if (outcome == null) {
+
+        while (windowStillOpen()) {
+            checkPreemption();
+            if (callOwnRally && shouldLaunchOwnNow() && session != null && session.shouldJoinYieldToOwn()) {
+                logInfo(logLine("Own rally due; leaving War to yield"));
                 break;
             }
+
+            Boolean outcome = attemptJoinOneRally();
+            if (outcome == null) {
+                // No green + — refresh list and keep watching (do not leave War).
+                refreshWarRallyListViaSoloTab();
+                continue;
+            }
             if (Boolean.TRUE.equals(outcome)) {
-                joinsSucceeded++;
                 if (session != null) {
                     session.incrementJoinsOk();
                 }
             } else if (session != null) {
                 session.incrementJoinsFailed();
             }
-            if (joinsSucceeded >= joinsWanted) {
-                break;
-            }
+            // Success or soft fail (formation/march): Solo→Rally for the next row.
             refreshWarRallyListViaSoloTab();
         }
         navigationHelper.ensureCorrectScreenLocation(LaunchPoint.ANY);

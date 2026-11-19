@@ -9,7 +9,8 @@ import dev.frostguard.engine.schedule.BearBSession;
 import dev.frostguard.engine.schedule.BearBSessionStore;
 
 /**
- * Bear B join short task: top joinable +, abort-on-fail same pass, runs until window end.
+ * Bear B join short task: stay on War, join on +, Solo→Rally on miss/soft-fail,
+ * until Own is due or the trap window ends.
  */
 public class BearJoinRoutine extends AbstractBearBRoutine {
 
@@ -100,16 +101,19 @@ public class BearJoinRoutine extends AbstractBearBRoutine {
                 return;
             }
 
-            int free = inspectFreeMarches();
-            if (free > 0) {
-                openWarAndJoin(free);
-            }
+            // War list + green + / Solo→Rally is the join gate — not free-march OCR.
+            // Stay on War until Own is due (or the window ends), then yield.
+            openWarAndJoinUntilOwnOrWindowEnd();
 
             if (!windowStillOpen()) {
                 finishWindowAndParkNext();
                 return;
             }
-            rescheduleInsideWindow(5);
+            if (callOwnRally && shouldLaunchOwnNow()) {
+                rescheduleInsideWindow(3);
+            } else {
+                rescheduleInsideWindow(5);
+            }
         } catch (Exception e) {
             logError(logLine("Issue during join: " + e.getMessage()), e);
             if (windowStillOpen()) {
