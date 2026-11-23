@@ -29,6 +29,12 @@ public abstract class EmulatorInstance {
     protected static final int RETRY_CEILING = 10, INTER_RETRY_MS = 3000;
     protected static final int BRIDGE_PROBE_LOOPS = 10, BRIDGE_PROBE_WAIT = 500;
     private static final Duration ADB_CONNECT_TIMEOUT = Duration.ofSeconds(10);
+    /** Poll interval while waiting for a quit/launch'd emulator to answer ADB. */
+    static final long EMU_ESCALATE_POLL_MS = 3_000L;
+    /** Max wait after escalating one dead emulator during coordinated recovery. */
+    static final long EMU_ESCALATE_TIMEOUT_MS = 60_000L;
+    /** Pause between escalating two failed emulators so boots do not stampede. */
+    static final long EMU_ESCALATE_STAGGER_MS = 5_000L;
 
     protected String consolePath;
     protected AndroidDebugBridge bridge;
@@ -86,16 +92,19 @@ public abstract class EmulatorInstance {
     }
 
     /**
-     * Exclusive kill-server + bridge recreate + reconnect/probe for every device.
+     * Exclusive force-kill of hung host {@code adb.exe}, bridge recreate, then
+     * reconnect/probe every device. Failed probes escalate that emulator
+     * (quit + launch) and poll until the device answers or the wait expires.
      * Invoked by {@link AdbCircuitBreaker} during coordinated recovery.
-     * Calls {@code onDeviceProbed} after each probe so Telegram can report live.
+     * Calls {@code onDeviceProbed} once per device with the <em>final</em> probe
+     * result so Telegram can report live.
      */
     public AdbRecoveryReport recoverAdbFully(Collection<String> deviceIndexes,
             java.util.function.BiConsumer<String, Boolean> onDeviceProbed)
             throws InterruptedException {
         bridgeMtx.lock();
         try {
-            LOG.warn("Coordinated ADB recovery: kill-server + bridge restart");
+            LOG.warn("Coordinated ADB recovery: force-kill adb + bridge restart");
             killAdb();
             sleep(2000);
             recreateBridgeLocked();
@@ -107,18 +116,27 @@ public abstract class EmulatorInstance {
         java.util.function.BiConsumer<String, Boolean> listener =
                 onDeviceProbed == null ? (index, ok) -> {} : onDeviceProbed;
         Map<String, Boolean> deviceOk = new LinkedHashMap<>();
+        boolean escalatedAny = false;
         if (deviceIndexes != null) {
             for (String idx : deviceIndexes) {
                 if (idx == null || idx.isBlank()) {
                     continue;
                 }
+                if (escalatedAny) {
+                    sleep(EMU_ESCALATE_STAGGER_MS);
+                }
                 invalidateAllCaches(idx);
                 boolean ok = probe(idx);
+                if (!ok) {
+                    LOG.warn("ADB recovery probe failed for dev {} — escalating emulator", idx);
+                    ok = escalateEmulatorAndAwaitAdb(idx);
+                    escalatedAny = true;
+                }
                 deviceOk.put(idx, ok);
                 if (ok) {
                     LOG.info("ADB recovery probe ok for dev {}", idx);
                 } else {
-                    LOG.warn("ADB recovery probe failed for dev {}", idx);
+                    LOG.warn("ADB recovery probe still failed for dev {} after escalate", idx);
                 }
                 try {
                     listener.accept(idx, ok);
@@ -132,8 +150,50 @@ public abstract class EmulatorInstance {
         if (!report.anyHealthy()) {
             LOG.error("Coordinated ADB recovery: devices healthy {}/{}",
                     report.okCount(), report.totalCount());
+        } else if (report.okCount() < report.totalCount()) {
+            LOG.warn("Coordinated ADB recovery partial: devices healthy {}/{}",
+                    report.okCount(), report.totalCount());
         }
         return report;
+    }
+
+    /**
+     * Quit + launch one emulator, then poll ADB until {@link #probe} succeeds
+     * or {@link #EMU_ESCALATE_TIMEOUT_MS} elapses. Used only during coordinated
+     * recovery so a single dead VM does not leave the fleet on a 2/3 "OK".
+     */
+    boolean escalateEmulatorAndAwaitAdb(String idx) throws InterruptedException {
+        return escalateEmulatorAndAwaitAdb(idx, 5_000L, EMU_ESCALATE_POLL_MS, EMU_ESCALATE_TIMEOUT_MS);
+    }
+
+    /**
+     * Package-visible timing overload for tests. {@code settleMs} is the pause
+     * after quit before launch; then poll every {@code pollMs} until timeout.
+     */
+    boolean escalateEmulatorAndAwaitAdb(String idx, long settleMs, long pollMs, long timeoutMs)
+            throws InterruptedException {
+        try {
+            closeEmulator(idx);
+            sleep(Math.max(0L, settleMs));
+            launchEmulator(idx);
+        } catch (Exception e) {
+            LOG.error("ADB recovery emulator escalate failed for {}: {}", idx, e.getMessage());
+            return false;
+        }
+        long deadline = System.currentTimeMillis() + Math.max(0L, timeoutMs);
+        while (System.currentTimeMillis() < deadline) {
+            if (Thread.currentThread().isInterrupted()) {
+                throw new InterruptedException("interrupted while awaiting ADB after escalate");
+            }
+            sleep(Math.max(1L, pollMs));
+            invalidateAllCaches(idx);
+            if (probe(idx)) {
+                LOG.info("ADB recovery escalate succeeded for dev {}", idx);
+                return true;
+            }
+            LOG.debug("ADB recovery escalate still waiting for dev {}", idx);
+        }
+        return false;
     }
 
     public boolean requestCoordinatedAdbRecovery(String reason) {
@@ -174,12 +234,55 @@ public abstract class EmulatorInstance {
         return consolePath + File.separator + "adb.exe";
     }
 
+    /**
+     * Ask adb to stop, then force-terminate any remaining host {@code adb.exe}
+     * processes. {@code kill-server} alone hangs when the binary is deadlocked;
+     * orphan processes also explain multi-count {@code hostAdbProcesses} flakes.
+     */
     private void killAdb() {
         try {
             Process p = new ProcessBuilder(adbPath(), "kill-server")
                     .directory(new File(adbPath()).getParentFile()).start();
-            if (!p.waitFor(10, TimeUnit.SECONDS)) p.destroyForcibly();
-        } catch (Exception e) { LOG.error("kill-server failed: {}", e.getMessage()); }
+            if (!p.waitFor(10, TimeUnit.SECONDS)) {
+                LOG.warn("kill-server did not finish in 10s — destroying subprocess");
+                p.destroyForcibly();
+            }
+        } catch (Exception e) {
+            LOG.error("kill-server failed: {}", e.getMessage());
+        }
+        forceKillHostAdbProcesses();
+    }
+
+    /** Package-visible for tests. Returns how many adb processes were signalled. */
+    int forceKillHostAdbProcesses() {
+        int signalled = 0;
+        try {
+            List<ProcessHandle> victims = ProcessHandle.allProcesses()
+                    .filter(EmulatorInstance::isHostAdbProcess)
+                    .toList();
+            for (ProcessHandle handle : victims) {
+                try {
+                    if (handle.destroyForcibly()) {
+                        signalled++;
+                        LOG.warn("Force-killed host ADB process pid={}", handle.pid());
+                    }
+                } catch (Exception e) {
+                    LOG.warn("Could not force-kill ADB pid={}: {}", handle.pid(), e.getMessage());
+                }
+            }
+            if (signalled > 0) {
+                sleep(1_000);
+            }
+        } catch (Exception e) {
+            LOG.error("Force-kill host ADB scan failed: {}", e.getMessage());
+        }
+        return signalled;
+    }
+
+    private static boolean isHostAdbProcess(ProcessHandle handle) {
+        String cmd = handle.info().command().orElse("").toLowerCase(Locale.ROOT);
+        String name = new File(cmd).getName();
+        return name.equals("adb.exe") || name.equals("adb");
     }
 
     public String getAdbPath()                     { return adbPath(); }
@@ -384,7 +487,8 @@ public abstract class EmulatorInstance {
         return probe(idx);
     }
 
-    private boolean probe(String idx) {
+    /** Package-visible so recovery escalate unit tests can stub device readiness. */
+    boolean probe(String idx) {
         try {
             invalidateDeviceCache(idx);
             IDevice d = findDevice(idx);

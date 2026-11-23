@@ -132,15 +132,15 @@ public class ScheduleService {
 						.map(AccountDescriptor::getEmulatorNumber)
 						.filter(emu -> emu != null && !emu.isBlank())
 						.collect(Collectors.toCollection(LinkedHashSet::new)),
-				this::alertHostAdbDead);
+				this::alertAdbOperator);
 	}
 
-	private void alertHostAdbDead(String message) {
+	private void alertAdbOperator(String message) {
 		try {
 			TelegramBotService.getInstance().notifyAllowedChat(message);
 		} catch (Exception ex) {
 			log(TpMessageSeverityEnum.ERROR, "ScheduleService", "-",
-					"HOST ADB DEAD Telegram alert failed: " + ex.getMessage());
+					"ADB operator Telegram alert failed: " + ex.getMessage());
 		}
 	}
 

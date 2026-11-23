@@ -51,7 +51,13 @@ public final class AdbCircuitBreaker {
 
     static final int FAILURE_THRESHOLD = 6;
     static final long FAILURE_WINDOW_MS = 60_000L;
-    static final long COOLDOWN_MS = 90_000L;
+    /** After a failed recovery, keep captures suppressed longer so thrash cannot reopen every minute. */
+    static final long COOLDOWN_MS = 300_000L;
+    /**
+     * After any coordinated recovery finishes, ignore automatic reopen requests
+     * for this long. Manual {@link #recoverNow} (Telegram {@code /adbreboot}) bypasses.
+     */
+    static final long AUTO_RECOVERY_QUIET_MS = 300_000L;
     static final long DRAIN_MS = 1_500L;
     /** Kill-server attempts while host ADB looks dead, then SUSPENDED. */
     static final int MAX_HOST_DEAD_RECOVERIES = 2;
@@ -81,6 +87,7 @@ public final class AdbCircuitBreaker {
     private volatile Supplier<HostAdbHealthSnapshot.Snapshot> hostProbeOverride;
     private volatile int consecutiveFailedRecoveries;
     private volatile boolean hostDeadAlertSent;
+    private volatile long autoRecoveryQuietUntilMs;
     private volatile AdbRecoveryReport lastRecoveryReport = AdbRecoveryReport.empty();
 
     public void configure(Runnable pauseEngine,
@@ -196,6 +203,15 @@ public final class AdbCircuitBreaker {
                     abbreviate(reason));
             return false;
         }
+        long quietUntil = autoRecoveryQuietUntilMs;
+        long now = System.currentTimeMillis();
+        if (quietUntil > now) {
+            LOG.warn("ADB auto-recovery quiet for {}s more — skipping reopen ({}); "
+                            + "use Telegram /adbreboot to force",
+                    Math.max(1L, (quietUntil - now + 999) / 1000),
+                    abbreviate(reason));
+            return state() == State.CLOSED;
+        }
         if (recoveryLock.tryLock()) {
             try {
                 return runRecoveryLocked(reason, false);
@@ -253,6 +269,11 @@ public final class AdbCircuitBreaker {
         this.hostProbeOverride = probe;
     }
 
+    /** Test hook: clear or shorten the post-recovery auto-reopen quiet window. */
+    void overrideAutoRecoveryQuietUntilForTest(long epochMs) {
+        this.autoRecoveryQuietUntilMs = Math.max(0L, epochMs);
+    }
+
     private boolean runRecoveryLocked(String reason, boolean manual) {
         if (!manual && state() == State.COOLDOWN && System.currentTimeMillis() < cooldownUntilMs) {
             LOG.warn("ADB circuit breaker in COOLDOWN until {} — skipping recovery ({})",
@@ -269,12 +290,19 @@ public final class AdbCircuitBreaker {
         LOG.warn("OUTAGE marker=ADB_CIRCUIT_OPEN reason='{}' {} consecutiveFailedRecoveries={} manual={}",
                 abbreviate(lastOpenReason), hostAtOpen.logToken(), consecutiveFailedRecoveries, manual);
         LOG.warn("ADB circuit breaker OPEN — coordinated recovery starting ({})", abbreviate(lastOpenReason));
+        notifyOperatorAdbTrouble(
+                "⚠️ *ADB recovery starting*\n"
+                        + "Reason: `" + abbreviate(lastOpenReason) + "`\n"
+                        + hostAtOpen.logToken() + "\n"
+                        + "_Queues paused. Auto-retry stays quiet for "
+                        + (AUTO_RECOVERY_QUIET_MS / 60_000) + " min after this attempt._");
 
         // Already know host ADB is dead and we have exhausted kill-server budget — skip another loop.
         if (!manual
                 && hostAtOpen.looksDead()
                 && consecutiveFailedRecoveries >= MAX_HOST_DEAD_RECOVERIES) {
             enterHostAdbSuspended(hostAtOpen, "host ADB still dead — skipping further kill-server");
+            beginAutoRecoveryQuiet();
             return false;
         }
 
@@ -309,6 +337,11 @@ public final class AdbCircuitBreaker {
                     enterHostAdbSuspended(probeHostAdb(), cause);
                 } else {
                     enterCooldown();
+                    notifyOperatorAdbTrouble(
+                            "⚠️ *ADB recovery failed*\n"
+                                    + "cause=`" + cause + "` detail=`interrupted`\n"
+                                    + "Cooldown " + (COOLDOWN_MS / 60_000)
+                                    + " min — send `/adbreboot` only after the host settles.");
                 }
                 return false;
             } catch (Exception e) {
@@ -320,6 +353,12 @@ public final class AdbCircuitBreaker {
                     enterHostAdbSuspended(probeHostAdb(), cause);
                 } else {
                     enterCooldown();
+                    notifyOperatorAdbTrouble(
+                            "⚠️ *ADB recovery failed*\n"
+                                    + "cause=`" + cause + "`\n"
+                                    + "_" + abbreviate(e.getMessage()) + "_\n"
+                                    + "Cooldown " + (COOLDOWN_MS / 60_000)
+                                    + " min — avoid rapid `/adbreboot` loops.");
                 }
                 return false;
             }
@@ -335,6 +374,15 @@ public final class AdbCircuitBreaker {
                         report.okCount(), report.totalCount(), hostAtClose.logToken());
                 LOG.info("ADB circuit breaker CLOSED — {}/{} device(s) healthy",
                         report.okCount(), report.totalCount());
+                if (report.okCount() < report.totalCount()) {
+                    notifyOperatorAdbTrouble(
+                            "⚠️ *ADB recovery partial*\n"
+                                    + report.okCount() + "/" + report.totalCount()
+                                    + " devices ready. Failed indexes stay unhealthy;\n"
+                                    + "auto-recovery quiet for "
+                                    + (AUTO_RECOVERY_QUIET_MS / 60_000)
+                                    + " min so thrash cannot reopen the breaker.");
+                }
                 return true;
             }
             String detail = report.totalCount() == 0
@@ -347,10 +395,16 @@ public final class AdbCircuitBreaker {
                 enterHostAdbSuspended(probeHostAdb(), cause);
             } else {
                 enterCooldown();
+                notifyOperatorAdbTrouble(
+                        "⚠️ *ADB recovery failed*\n"
+                                + "cause=`" + cause + "` detail=`" + abbreviate(detail) + "`\n"
+                                + "Cooldown " + (COOLDOWN_MS / 60_000)
+                                + " min. Check LDPlayer / dismiss adb popups, then `/adbreboot`.");
             }
             return false;
         } finally {
             recoveryThread.set(Boolean.FALSE);
+            beginAutoRecoveryQuiet();
             if (paused && !keepPausedForSuspend) {
                 try {
                     resumeEngine.run();
@@ -358,6 +412,20 @@ public final class AdbCircuitBreaker {
                     LOG.error("Failed to resume queues after ADB recovery: {}", e.getMessage());
                 }
             }
+        }
+    }
+
+    private void beginAutoRecoveryQuiet() {
+        autoRecoveryQuietUntilMs = System.currentTimeMillis() + AUTO_RECOVERY_QUIET_MS;
+        LOG.info("ADB auto-recovery quiet for {}s — automatic reopen suppressed",
+                AUTO_RECOVERY_QUIET_MS / 1000);
+    }
+
+    private void notifyOperatorAdbTrouble(String message) {
+        try {
+            operatorAlert.accept(message);
+        } catch (Exception e) {
+            LOG.error("Failed to send ADB operator alert: {}", e.getMessage());
         }
     }
 
@@ -429,10 +497,13 @@ public final class AdbCircuitBreaker {
     }
 
     private void enterCooldown() {
-        cooldownUntilMs = System.currentTimeMillis() + COOLDOWN_MS;
+        long stretch = COOLDOWN_MS * Math.max(1, consecutiveFailedRecoveries);
+        // Cap so a bad host does not suppress captures for hours before SUSPENDED.
+        stretch = Math.min(stretch, COOLDOWN_MS * MAX_HOST_DEAD_RECOVERIES);
+        cooldownUntilMs = System.currentTimeMillis() + stretch;
         state.set(State.COOLDOWN);
         LOG.warn("ADB circuit breaker COOLDOWN for {}s — captures suppressed",
-                COOLDOWN_MS / 1000);
+                stretch / 1000);
     }
 
     private Collection<String> safeDeviceIndexes() {

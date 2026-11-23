@@ -214,7 +214,7 @@ public class EmulatorController {
         return backend.circuitBreaker().state();
     }
 
-    /** Pause queues, kill-server + bridge reboot, reconnect all, resume. */
+    /** Pause queues, force-kill hung adb + bridge reboot, escalate ❌ emus, resume. */
     public boolean recoverAdbCoordinated(String reason) {
         return recoverAdbCoordinated(reason, null);
     }

@@ -1559,7 +1559,8 @@ public class TelegramBotService implements BotStateListener {
 
     private void handleAdbRebootCommand(long chatId) {
         try {
-            sendMessage(chatId, "🔌 Coordinated ADB recovery — pausing queues, rebooting bridge…");
+            sendMessage(chatId, "🔌 Coordinated ADB recovery — force-kill hung adb, "
+                    + "new bridge, escalate ❌ emulators…");
             Map<String, String> labelByEmu = adbRecoveryDeviceLabels(
                     ProfileService.obtain().fetchAllAccounts());
             EmulatorController emu = EmulatorController.getInstance();
@@ -1569,15 +1570,20 @@ public class TelegramBotService implements BotStateListener {
             });
             AdbRecoveryReport report = emu.lastAdbRecoveryReport();
             if (healthy) {
+                String suffix = report.okCount() < report.totalCount()
+                        ? " Partial — auto-recovery stays quiet ~5 min to avoid thrash."
+                        : "";
                 sendMessage(chatId, "✅ Queues resumed ("
-                        + report.okCount() + "/" + report.totalCount() + " devices ready).");
+                        + report.okCount() + "/" + report.totalCount() + " devices ready)."
+                        + suffix);
             } else if (emu.adbCircuitState() == AdbCircuitBreaker.State.SUSPENDED) {
                 sendMessage(chatId, "🚨 HOST ADB still dead — queues stay paused.\n"
                         + "Dismiss `adb.exe` error popups on the PC, or reboot the PC, "
                         + "then retry `/adbreboot`.");
             } else {
-                sendMessage(chatId, "⚠️ No devices ready — captures suppressed during cooldown.\n"
-                        + "Check host ADB / LDPlayer, then retry `/adbreboot`.");
+                sendMessage(chatId, "⚠️ No devices ready — captures suppressed ~5 min cooldown.\n"
+                        + "Check host ADB / LDPlayer, wait for the host to settle, "
+                        + "then retry `/adbreboot`.");
             }
         } catch (Exception e) {
             logger.error("handleAdbRebootCommand failed", e);

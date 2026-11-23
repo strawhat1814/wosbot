@@ -29,6 +29,7 @@ class AdbCircuitBreakerTest {
     void setUp() {
         breaker = new AdbCircuitBreaker();
         breaker.overrideDrainMillisForTest(0L);
+        breaker.overrideAutoRecoveryQuietUntilForTest(0L);
         recoverCalls.set(0);
         pauseCalls.set(0);
         resumeCalls.set(0);
@@ -220,18 +221,19 @@ class AdbCircuitBreakerTest {
         assertEquals(AdbCircuitBreaker.State.COOLDOWN, breaker.state());
         assertEquals(1, recoverCalls.get());
         assertEquals(1, resumeCalls.get());
-        assertTrue(alerts.isEmpty());
+        assertTrue(alerts.stream().anyMatch(a -> a.contains("ADB recovery")));
 
         assertFalse(breaker.recoverNow("host dead wave 2"));
         assertEquals(AdbCircuitBreaker.State.SUSPENDED, breaker.state());
         assertEquals(2, recoverCalls.get());
         assertEquals(1, resumeCalls.get());
-        assertEquals(1, alerts.size());
-        assertTrue(alerts.get(0).contains("/adbreboot"));
+        long hostDeadAlerts = alerts.stream().filter(a -> a.contains("HOST ADB DEAD")).count();
+        assertEquals(1, hostDeadAlerts);
+        assertTrue(alerts.stream().anyMatch(a -> a.contains("/adbreboot")));
 
         assertFalse(breaker.requestRecovery("ignored while suspended"));
         assertEquals(2, recoverCalls.get());
-        assertEquals(1, alerts.size());
+        assertEquals(1, alerts.stream().filter(a -> a.contains("HOST ADB DEAD")).count());
         assertFalse(breaker.isCaptureAllowed());
         assertTrue(breaker.isHostAdbSuspended());
     }
@@ -257,14 +259,14 @@ class AdbCircuitBreakerTest {
 
         assertFalse(breaker.recoverNow("manual while dead"));
         assertEquals(AdbCircuitBreaker.State.SUSPENDED, breaker.state());
-        assertEquals(1, alerts.size());
+        assertEquals(1, alerts.stream().filter(a -> a.contains("HOST ADB DEAD")).count());
         assertEquals(0, resumeCalls.get());
 
         host.set(new HostAdbHealthSnapshot.Snapshot(1L, true, "Android Debug Bridge version 1.0.41"));
         assertTrue(breaker.recoverNow("telegram /adbreboot"));
         assertEquals(AdbCircuitBreaker.State.CLOSED, breaker.state());
         assertEquals(1, resumeCalls.get());
-        assertEquals(1, alerts.size());
+        assertEquals(1, alerts.stream().filter(a -> a.contains("HOST ADB DEAD")).count());
     }
 
     @Test
@@ -273,6 +275,56 @@ class AdbCircuitBreakerTest {
         assertFalse(new HostAdbHealthSnapshot.Snapshot(-1L, false, "unprobed").looksDead());
         assertTrue(new HostAdbHealthSnapshot.Snapshot(0L, false, "exit=1 out=fail").looksDead());
         assertTrue(new HostAdbHealthSnapshot.Snapshot(0L, true, "Android Debug Bridge version 1.0.41").looksDead());
+    }
+
+    @Test
+    void autoRecoveryQuietSuppressesReopenUntilElapsedButManualBypasses() {
+        List<String> alerts = new ArrayList<>();
+        breaker.configure(
+                pauseCalls::incrementAndGet,
+                resumeCalls::incrementAndGet,
+                () -> List.of("0"),
+                (indexes, onDeviceProbed) -> {
+                    recoverCalls.incrementAndGet();
+                    return allOk(indexes, onDeviceProbed);
+                },
+                () -> "C:\\fake\\adb.exe",
+                alerts::add);
+
+        assertTrue(breaker.requestRecovery("first wave"));
+        assertEquals(1, recoverCalls.get());
+        assertFalse(alerts.isEmpty());
+
+        // Quiet window started by the first recovery — automatic reopen must not thrash.
+        assertTrue(breaker.requestRecovery("second wave too soon"));
+        assertEquals(1, recoverCalls.get());
+
+        // Manual /adbreboot still runs.
+        assertTrue(breaker.recoverNow("telegram /adbreboot"));
+        assertEquals(2, recoverCalls.get());
+    }
+
+    @Test
+    void failedRecoveryAlertsAndUsesExtendedCooldown() {
+        List<String> alerts = new ArrayList<>();
+        breaker.configure(
+                pauseCalls::incrementAndGet,
+                resumeCalls::incrementAndGet,
+                () -> List.of("0"),
+                (indexes, onDeviceProbed) -> {
+                    recoverCalls.incrementAndGet();
+                    return allFail(indexes, onDeviceProbed);
+                },
+                () -> "C:\\fake\\adb.exe",
+                alerts::add);
+        // Healthy host so failure is DEVICES_UNREACHABLE, not HOST_ADB_DEAD suspend.
+        breaker.overrideHostProbeForTest(() ->
+                new HostAdbHealthSnapshot.Snapshot(1L, true, "Android Debug Bridge version 1.0.41"));
+
+        assertFalse(breaker.recoverNow("force fail"));
+        assertEquals(AdbCircuitBreaker.State.COOLDOWN, breaker.state());
+        assertFalse(breaker.isCaptureAllowed());
+        assertTrue(alerts.stream().anyMatch(a -> a.contains("ADB recovery failed")));
     }
 
     private static AdbRecoveryReport allOk(Collection<String> indexes,
