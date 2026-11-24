@@ -1624,19 +1624,32 @@ public class TelegramBotService implements BotStateListener {
             }
             Thread.sleep(1500);
 
+            // haltEngine does not keep the LDPlayer backend warm (especially right after a
+            // GUI relaunch before /startbot). Initialize before quit or every close no-ops.
+            EmulatorController.getInstance().initialize();
+
             // Close every configured slot (enabled or not) so disabled orphans do not survive reboot.
             Set<String> emulators = allConfiguredEmulatorIndexes(ProfileService.obtain().fetchAllAccounts());
+            int closed = 0;
+            int failed = 0;
             for (String emu : emulators) {
                 try {
                     EmulatorController.getInstance().closeEmulator(emu);
+                    closed++;
+                    logger.info("Reboot: closed emulator {}", emu);
                 } catch (Exception ex) {
+                    failed++;
                     logger.warn("Reboot: Emulator close soft handled for {}: {}", emu, ex.getMessage());
                 }
                 Thread.sleep(1000);
             }
+            sendMessage(chatId, "🛑 Closed " + closed + "/" + emulators.size()
+                    + " emulator(s)"
+                    + (failed > 0 ? " (" + failed + " failed)" : "")
+                    + ".");
 
             ScheduleService.obtain().launchEngine();
-            sendMessage(chatId, "✅ Restarted.");
+            sendMessage(chatId, "✅ Restarted queues. Emulators relaunch via Initialize.");
 
         } catch (Exception e) {
             logger.error("handleRebootCommand failed", e);
