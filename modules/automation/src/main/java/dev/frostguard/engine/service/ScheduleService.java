@@ -43,6 +43,7 @@ import dev.frostguard.engine.listener.QueueStateListener;
 import dev.frostguard.engine.schedule.BearTrapParticipationSchedule;
 import dev.frostguard.engine.schedule.DelayedTask;
 import dev.frostguard.engine.schedule.DelayedTaskRegistry;
+import dev.frostguard.engine.schedule.GlobalMonitorService;
 import dev.frostguard.engine.schedule.StaminaDeferral;
 import dev.frostguard.engine.schedule.TaskDispatcher;
 import dev.frostguard.engine.schedule.TaskQueue;
@@ -109,6 +110,7 @@ public class ScheduleService {
 		}
 
 		wireAdbCircuitBreaker(enabled);
+		GlobalMonitorService.getInstance().setOperatorAlert(this::alertAdbOperator);
 
 		enabled.stream()
 				.sorted(Comparator.comparing(AccountDescriptor::getPriority).reversed())

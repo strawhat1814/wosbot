@@ -31,14 +31,29 @@ Also correlate Windows **Application** log around the same second for:
 - `adb.exe` / `ldconsole.exe` popup or fault `0xc000012d` / `0xc0000142` / `0xc0000409`
 - `CreateProcess error=1455` (paging file too small) when spawning `adb.exe`
 
+## LDPlayer VM private-memory guard
+
+Overnight `Ld9BoxHeadless` processes can balloon to 40–50 GB private each even when
+LDPlayer is set to 6 GB RAM. That drives host **Committed** toward the limit and
+yields `CreateProcess error=1455` on `ldconsole`/`adb`.
+
+GlobalMonitor (every ~2 min when enabled):
+
+1. Scan host `Ld9BoxHeadless` private bytes; map `--comment leidianN` → emulator index.
+2. If a **monitored** index is ≥ `EMULATOR_VM_PRIVATE_LIMIT_GB_INT` (default **20**):
+   Telegram warn → `quit` + `launch` that index only.
+3. Per-index cooldown (~45 min) so one leak cannot reboot-loop.
+
+Markers: `LDPLAYER_VM_BLOATED`, `LDPLAYER_VM_RESTARTED`.
+
 ## Prevention margin (host)
 
 Good 4-client days stay under the cliff; bad days tip over it. Reduce tip risk:
 
-- Windows pagefile: system-managed or a fixed size with real headroom (not “disabled”).
-- Before overnight: Task Manager → only **one** healthy `adb.exe` after a quiet `/adbreboot`; quit scrcpy / extra SDK platform-tools / other bots on the same ports.
+- Prefer the VM memory guard above; also fully quit/relaunch LDPlayers after long runs.
+- Before overnight: only **one** healthy `adb.exe` after a quiet `/adbreboot`; quit scrcpy / extra SDK platform-tools / other bots on the same ports.
 - Do not run Nightly and the fork against the same LDPlayers at once.
-- Leave RAM/commit headroom; 4× LDPlayer + OCR is heavy.
+- Pagefile on this host is already large (~192 GB commit limit); enlarging it further does not fix Ld9BoxHeadless leaks.
 
 ## 2026-10-14 outage (evidence)
 

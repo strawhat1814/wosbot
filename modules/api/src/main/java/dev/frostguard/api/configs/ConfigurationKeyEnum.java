@@ -326,6 +326,12 @@ public enum ConfigurationKeyEnum {
     // Added by Shederator | Why: serialize concurrent emulator boots to avoid host freezes when
     // launching 3+ instances at once. Delay (ms) enforced between consecutive emulator launches.
     EMULATOR_LAUNCH_DELAY_MS_INT        ("30000",       Integer.class,  ConfigCategory.SYSTEM),
+    // Quit/launch an LDPlayer index when its Ld9BoxHeadless private bytes balloon
+    // (overnight leak past the 6 GB setting → host commit 1455). Disabled = no scan.
+    EMULATOR_VM_MEMORY_GUARD_BOOL       ("true",        Boolean.class,  ConfigCategory.SYSTEM),
+    EMULATOR_VM_PRIVATE_LIMIT_GB_INT    ("20",          Integer.class,  ConfigCategory.SYSTEM),
+    EMULATOR_VM_MEMORY_CHECK_SEC_INT    ("120",         Integer.class,  ConfigCategory.SYSTEM),
+    EMULATOR_VM_MEMORY_COOLDOWN_MIN_INT ("45",          Integer.class,  ConfigCategory.SYSTEM),
     MEMU_PATH_STRING                    ("",            String.class,   ConfigCategory.SYSTEM),
     MUMU_PATH_STRING                    ("C:\\Program Files\\Netease\\MuMuPlayer\\nx_main", String.class, ConfigCategory.SYSTEM),
     PROFILE_SWITCH_COOLDOWN_MS_INT      ("10000",       Integer.class,  ConfigCategory.SYSTEM),
