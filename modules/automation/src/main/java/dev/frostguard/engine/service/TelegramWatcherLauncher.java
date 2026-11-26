@@ -108,12 +108,9 @@ public class TelegramWatcherLauncher {
     }
 
     private static File resolveLauncher() {
-        String packagedLauncher = System.getProperty(WATCHER_LAUNCHER_PROPERTY, "").trim();
-        if (!packagedLauncher.isBlank()) {
-            File launcher = new File(packagedLauncher);
-            if (launcher.isFile()) {
-                return launcher;
-            }
+        File packaged = resolvePackagedLauncherProperty();
+        if (packaged != null) {
+            return packaged;
         }
         // Try to load the jar path from the active workspace.
         try {
@@ -125,30 +122,75 @@ public class TelegramWatcherLauncher {
                 }
                 String jarPath = props.getProperty("botJarPath", "");
                 if (!jarPath.isBlank()) {
-                    File dir = new File(jarPath).getParentFile();
-                    for (int i = 0; i < 5 && dir != null; i++) {
-                        File bat = new File(dir, "fg-watcher.bat");
-                        if (bat.exists()) return bat;
-                        File sourceLauncher = new File(dir,
-                                "packaging/desktop/src/main/windows/Start-Frostguard-Watcher.bat");
-                        if (sourceLauncher.exists()) return sourceLauncher;
-                        dir = dir.getParentFile();
+                    File found = findLauncherWalkingFrom(new File(jarPath).getParentFile());
+                    if (found != null) {
+                        return found;
                     }
                 }
             }
         } catch (Exception ignored) {}
 
-        // Fallback: walk up from current working dir
-        File dir = new File(System.getProperty("user.dir"));
+        return findLauncherWalkingFrom(new File(System.getProperty("user.dir")));
+    }
+
+    /**
+     * Resolves {@code frostguard.watcher.launcher}, expanding a literal {@code $APPDIR}
+     * placeholder against {@code user.dir} when the packaged property was not substituted.
+     */
+    public static File resolvePackagedLauncherProperty() {
+        String packagedLauncher = System.getProperty(WATCHER_LAUNCHER_PROPERTY, "").trim();
+        if (packagedLauncher.isBlank()) {
+            return null;
+        }
+        if (packagedLauncher.contains("$APPDIR")) {
+            String appDir = System.getProperty("user.dir", "").trim();
+            if (!appDir.isBlank()) {
+                packagedLauncher = packagedLauncher.replace("$APPDIR", appDir);
+            }
+        }
+        File launcher = new File(packagedLauncher);
+        return launcher.isFile() ? launcher : null;
+    }
+
+    /** Walks up from {@code startDir} looking for a watcher launcher. */
+    public static File findLauncherWalkingFrom(File startDir) {
+        File dir = startDir;
         for (int i = 0; i < 5 && dir != null; i++) {
-            File bat = new File(dir, "fg-watcher.bat");
-            if (bat.exists()) return bat;
-            File sourceLauncher = new File(dir,
-                    "packaging/desktop/src/main/windows/Start-Frostguard-Watcher.bat");
-            if (sourceLauncher.exists()) return sourceLauncher;
+            File found = findLauncherInDirectory(dir);
+            if (found != null) {
+                return found;
+            }
             dir = dir.getParentFile();
         }
+        return null;
+    }
 
+    /**
+     * Prefers {@code fg-watcher.bat}, then packaged native watcher exes, then the
+     * source-tree Start-Frostguard-Watcher.bat.
+     */
+    public static File findLauncherInDirectory(File dir) {
+        if (dir == null || !dir.isDirectory()) {
+            return null;
+        }
+        File bat = new File(dir, "fg-watcher.bat");
+        if (bat.isFile()) {
+            return bat;
+        }
+        for (String name : new String[] {
+                "FrostguardNightlyWatcher.exe",
+                "FrostguardWatcher.exe"
+        }) {
+            File exe = new File(dir, name);
+            if (exe.isFile()) {
+                return exe;
+            }
+        }
+        File sourceLauncher = new File(dir,
+                "packaging/desktop/src/main/windows/Start-Frostguard-Watcher.bat");
+        if (sourceLauncher.isFile()) {
+            return sourceLauncher;
+        }
         return null;
     }
 

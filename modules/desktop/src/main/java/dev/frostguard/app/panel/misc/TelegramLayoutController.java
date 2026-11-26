@@ -71,7 +71,6 @@ public class TelegramLayoutController {
 
     /** Shortcut name placed in the Windows Startup folder. */
     private static final String SHORTCUT_NAME = "Frostguard-Telegram-Watcher.lnk";
-    private static final String WATCHER_LAUNCHER_PROPERTY = "frostguard.watcher.launcher";
 
     @FXML
     public void initialize() {
@@ -382,24 +381,20 @@ public class TelegramLayoutController {
     /**
      * Walks up the directory tree from several anchor points to find the watcher launcher.
      * Typical layout: frostguard/modules/desktop/target/frostguard-desktop-X.jar  →  frostguard/fg-watcher.bat
+     * Installed Nightly/Stable also resolve FrostguardNightlyWatcher.exe / FrostguardWatcher.exe.
      */
     private File resolveWatcherLauncher() {
-        String packagedLauncher = System.getProperty(WATCHER_LAUNCHER_PROPERTY, "").trim();
-        if (!packagedLauncher.isBlank()) {
-            File launcher = new File(packagedLauncher);
-            if (launcher.isFile()) return launcher;
+        File packaged = TelegramWatcherLauncher.resolvePackagedLauncherProperty();
+        if (packaged != null) {
+            return packaged;
         }
         // 1. Walk up from the bot JAR path shown in the UI (most reliable)
         String jarPath = textFieldBotJarPath.getText().trim();
         if (!jarPath.isBlank()) {
-            File dir = new File(jarPath).getParentFile();
-            for (int i = 0; i < 5 && dir != null; i++) {
-                File bat = new File(dir, "fg-watcher.bat");
-                if (bat.exists()) return bat;
-                File sourceLauncher = new File(dir,
-                        "packaging/desktop/src/main/windows/Start-Frostguard-Watcher.bat");
-                if (sourceLauncher.exists()) return sourceLauncher;
-                dir = dir.getParentFile();
+            File found = TelegramWatcherLauncher.findLauncherWalkingFrom(
+                    new File(jarPath).getParentFile());
+            if (found != null) {
+                return found;
             }
         }
 
@@ -408,28 +403,15 @@ public class TelegramLayoutController {
             File dir = new File(
                     TelegramLayoutController.class.getProtectionDomain()
                             .getCodeSource().getLocation().toURI()).getParentFile();
-            for (int i = 0; i < 5 && dir != null; i++) {
-                File bat = new File(dir, "fg-watcher.bat");
-                if (bat.exists()) return bat;
-                File sourceLauncher = new File(dir,
-                        "packaging/desktop/src/main/windows/Start-Frostguard-Watcher.bat");
-                if (sourceLauncher.exists()) return sourceLauncher;
-                dir = dir.getParentFile();
+            File found = TelegramWatcherLauncher.findLauncherWalkingFrom(dir);
+            if (found != null) {
+                return found;
             }
         } catch (Exception ignored) {}
 
         // 3. Walk up from user.dir (works when launched from IDE / project root)
-        File dir = new File(System.getProperty("user.dir"));
-        for (int i = 0; i < 5 && dir != null; i++) {
-            File bat = new File(dir, "fg-watcher.bat");
-            if (bat.exists()) return bat;
-            File sourceLauncher = new File(dir,
-                    "packaging/desktop/src/main/windows/Start-Frostguard-Watcher.bat");
-            if (sourceLauncher.exists()) return sourceLauncher;
-            dir = dir.getParentFile();
-        }
-
-        return null;
+        return TelegramWatcherLauncher.findLauncherWalkingFrom(
+                new File(System.getProperty("user.dir")));
     }
 
     @FXML

@@ -74,4 +74,26 @@ class TelegramWatcherLauncherTest {
 
         assertFalse(TelegramWatcherLauncher.isWatcherRunning(lockPath));
     }
+
+    @Test
+    void findsPackagedNightlyWatcherExeBesideInstallRoot() throws Exception {
+        Path install = tempDir.resolve("Frostguard Nightly");
+        Path app = install.resolve("app");
+        Files.createDirectories(app);
+        Path exe = Files.createFile(install.resolve("FrostguardNightlyWatcher.exe"));
+
+        assertEquals(exe.toFile(),
+                TelegramWatcherLauncher.findLauncherWalkingFrom(app.toFile()));
+    }
+
+    @Test
+    void prefersFgWatcherBatOverNativeExe() throws Exception {
+        Path install = tempDir.resolve("install");
+        Files.createDirectories(install);
+        Path bat = Files.createFile(install.resolve("fg-watcher.bat"));
+        Files.createFile(install.resolve("FrostguardWatcher.exe"));
+
+        assertEquals(bat.toFile(),
+                TelegramWatcherLauncher.findLauncherInDirectory(install.toFile()));
+    }
 }
