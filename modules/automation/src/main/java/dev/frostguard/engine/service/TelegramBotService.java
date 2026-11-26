@@ -1391,7 +1391,8 @@ public class TelegramBotService implements BotStateListener {
                 }
                 boolean isUnused = unused.contains(index);
                 String names = owners.stream()
-                        .map(p -> p.getName() + (Boolean.TRUE.equals(p.getEnabled()) ? " ON" : " OFF"))
+                        .map(p -> closeEmusOwnerLabel(p)
+                                + (Boolean.TRUE.equals(p.getEnabled()) ? " ON" : " OFF"))
                         .collect(Collectors.joining(", "));
                 sb.append(running ? "🟢" : "⚪").append(" `").append(escV2(index)).append("`");
                 if (isUnused) {
@@ -1589,6 +1590,25 @@ public class TelegramBotService implements BotStateListener {
             logger.error("handleAdbRebootCommand failed", e);
             sendMessage(chatId, "❌ ADB reboot failed: " + e.getMessage());
         }
+    }
+
+    /**
+     * Owner label for `/closeemus` rows: prefer in-game character name so shared
+     * client slots stay identifiable; fall back to the profile/client name.
+     */
+    static String closeEmusOwnerLabel(AccountDescriptor profile) {
+        if (profile == null) {
+            return "?";
+        }
+        String character = profile.getCharacterName();
+        if (character != null && !character.isBlank()) {
+            return character.trim();
+        }
+        String client = profile.getName();
+        if (client != null && !client.isBlank()) {
+            return client.trim();
+        }
+        return "?";
     }
 
     /** Emulator slot → profile display name for live `/adbreboot` lines. */

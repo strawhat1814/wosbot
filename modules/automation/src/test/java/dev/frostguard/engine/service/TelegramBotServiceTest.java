@@ -85,6 +85,19 @@ class TelegramBotServiceTest {
         assertEquals(2, byEmu.size());
     }
 
+    @Test
+    void closeEmusOwnerLabelPrefersCharacterNameOverClient() {
+        AccountDescriptor withCharacter = new AccountDescriptor(
+                1L, "ClientA", "3", true, 1L, 0L, null, "HeroOne", null, null);
+        AccountDescriptor blankCharacter = new AccountDescriptor(
+                2L, "ClientB", "4", false, 1L, 0L, null, "  ", null, null);
+        AccountDescriptor missingCharacter = new AccountDescriptor(3L, "ClientC", "5", true, 1L, 0L);
+
+        assertEquals("HeroOne", TelegramBotService.closeEmusOwnerLabel(withCharacter));
+        assertEquals("ClientB", TelegramBotService.closeEmusOwnerLabel(blankCharacter));
+        assertEquals("ClientC", TelegramBotService.closeEmusOwnerLabel(missingCharacter));
+    }
+
 
     @Test
     void logDownloadUsesTheSelectedWorkspace() {
