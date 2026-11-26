@@ -510,11 +510,23 @@ abstract class AbstractBearBRoutine extends DelayedTask {
         return UNREAD_FREE_MARCHES_FALLBACK;
     }
 
+    /**
+     * Leave the join formation / fail dialog without exiting Alliance War.
+     * A blind second Back dumps War onto World, and the following Solo→Rally
+     * taps then hit the map instead of the War tabs.
+     */
     protected void abortJoinFormationScreen() {
         pressBack();
         sleepTask(300);
-        pressBack();
-        sleepTask(300);
+        // Dialog-on-formation: first Back closed the dialog only. One more Back
+        // still lands on the War list. Never press a third / unconditional second.
+        ImageSearchResultData stillDeploy = templateSearchHelper.locatePattern(
+                BEAR_DEPLOY_BUTTON,
+                SearchConfig.builder().withThreshold(90).withMaxAttempts(1).build());
+        if (stillDeploy.isFound()) {
+            pressBack();
+            sleepTask(300);
+        }
     }
 
     protected abstract String logPrefix();
@@ -655,10 +667,28 @@ abstract class AbstractBearBRoutine extends DelayedTask {
     }
 
     /**
+     * Re-open Alliance War when the home War button is visible (War was closed /
+     * dumped to World). Home War hidden means War UI is already up.
+     */
+    protected void ensureAllianceWarOpen() {
+        ImageSearchResultData warButton = templateSearchHelper.locatePattern(
+                GAME_HOME_WAR,
+                SearchConfig.builder().withThreshold(90).withMaxAttempts(1).build());
+        if (!warButton.isFound()) {
+            return;
+        }
+        logInfo(logLine("War closed; re-opening before Solo→Rally"));
+        tapInside(warButton);
+        sleepTask(800);
+    }
+
+    /**
      * Leave Rally (Solo) then return (Rally) so the list rebuilds with the next
      * joinable row on top. Re-tapping Rally alone does not refresh.
+     * Always confirm War is open first so Solo/Rally never run on World.
      */
     protected void refreshWarRallyListViaSoloTab() {
+        ensureAllianceWarOpen();
         logInfo(logLine("Refreshing War list via Solo→Rally tabs"));
         tapInside(CommonGameAreas.ALLIANCE_WAR_SOLO_TAB, 1, WAR_TAB_REFRESH_SETTLE_MS);
         sleepTask(WAR_TAB_REFRESH_SETTLE_MS);
